@@ -1,0 +1,19 @@
+name: Validation
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '24', cache: 'npm', cache-dependency-path: tests/package-lock.json }
+      - run: npm ci --prefix tests
+      - run: npm test --prefix tests
+      - run: node --check admin-mfa.js
+      - run: node --check admin-ui.js

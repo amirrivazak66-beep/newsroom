@@ -431,6 +431,7 @@ body{background:#f2f6f8}
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="admin-mfa.js"></script>
+<script src="admin-ui.js"></script>
 <script src="supabase-config.js"></script>
 <script src="app.js"></script>
 <script>
@@ -705,31 +706,16 @@ body{background:#f2f6f8}
   });
 
   // ---- Feed management (Supabase-backed) ----
-  function categoryOptionsHtml(selected){
-    return KR.CATEGORY_OPTIONS.map(c => `<option value="${c}" ${c===selected?'selected':''}>${c}</option>`).join('');
-  }
-
   function renderFeedRows(){
     const wrap = document.getElementById('feedRows');
-    wrap.innerHTML = '';
-    feeds.forEach((f, idx) => {
-      const row = document.createElement('div');
-      row.className = 'feed-row';
-      row.style.flexWrap = 'wrap';
-      row.innerHTML = `
-        <select class="cat" data-idx="${idx}" data-field="cat" style="max-width:150px; flex:none; border:1.5px solid #e3e7ee; border-radius:9px; padding:9px 10px; font-family:inherit; font-size:13px;">
-          ${categoryOptionsHtml(f.cat)}
-        </select>
-        <input data-idx="${idx}" data-field="url" value="${f.url}" placeholder="آدرس RSS" style="min-width:220px;">
-        <input type="number" min="1" max="30" data-idx="${idx}" data-field="itemCount" value="${f.itemCount}" title="تعداد خبر" style="max-width:70px; flex:none;">
-        <input type="number" min="5" max="1440" data-idx="${idx}" data-field="updateIntervalMinutes" value="${f.updateIntervalMinutes}" title="بازه بروزرسانی (دقیقه)" style="max-width:80px; flex:none;">
-        <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--text-mute); flex:none;">
-          <input type="checkbox" data-idx="${idx}" data-field="includeMedia" ${f.includeMedia ? 'checked' : ''}> تصویر
-        </label>
-        <button data-remove="${idx}">✕</button>`;
-      wrap.appendChild(row);
-    });
-
+    wrap.replaceChildren();
+    feeds.forEach((f,idx)=>wrap.append(RadinUI.inputRow([
+      {key:'cat',value:f.cat,options:KR.CATEGORY_OPTIONS.map(x=>[x,x])},
+      {key:'url',value:f.url,label:'آدرس RSS',width:'320px'},
+      {key:'itemCount',value:f.itemCount,type:'number',min:1,max:50,label:'تعداد خبر',width:'80px'},
+      {key:'updateIntervalMinutes',value:f.updateIntervalMinutes,type:'number',min:5,max:1440,label:'بازه بروزرسانی',width:'90px'},
+      {key:'includeMedia',value:f.includeMedia,type:'checkbox',label:'تصویر'}
+    ],idx,'feed')));
     wrap.querySelectorAll('button[data-remove]').forEach(btn => {
       btn.addEventListener('click', () => {
         const idx = Number(btn.dataset.remove);
@@ -757,7 +743,7 @@ body{background:#f2f6f8}
   async function loadFeedsFromDb(){
     const { data, error } = await sb.from('rss_feeds').select('*').order('created_at');
     if (error){
-      document.getElementById('feedRows').innerHTML = '<p style="color:#c94b4b; font-size:13px;">خطا در اتصال به دیتابیس: ' + error.message + '</p>';
+      document.getElementById('feedRows').textContent = 'خطا در اتصال به دیتابیس: ' + error.message;
       return;
     }
     feeds = (data || []).map(d => ({
@@ -827,11 +813,10 @@ body{background:#f2f6f8}
       el.innerHTML = '<p style="font-size:12.5px; color:#aab4c2;">فیدی تنظیم نشده.</p>';
       return;
     }
-    el.innerHTML = feeds.map(f => `
-      <div style="display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px dashed #eceff3; font-size:13px; gap:10px;">
-        <span style="font-weight:700; flex-shrink:0;">${f.cat}</span>
-        <span style="color:#7c8aa0; direction:ltr; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${f.url}</span>
-      </div>`).join('');
+    el.replaceChildren();
+    for(const f of feeds)el.append(RadinUI.element('div',{className:'recent-news-item'},[
+      RadinUI.element('span',{text:f.cat}),RadinUI.element('span',{text:f.url})
+    ]));
   }
 
   // ---- Server-side RSS ingestion ----
@@ -845,10 +830,14 @@ body{background:#f2f6f8}
     try{
       const { data, error } = await sb.functions.invoke('rss-ingest', { body: { trigger: 'manual' } });
       if (error) throw error;
-      const reports = (data?.reports || []).map(r => r.ok
-        ? '<div class="pull-report-item ok">✅ ' + String(r.feed || 'منبع') + ' — ' + Number(r.fetched || 0) + ' خبر بررسی شد؛ ' + Number(r.newItems || 0) + ' خبر جدید به صف بررسی اضافه شد.</div>'
-        : '<div class="pull-report-item fail">⚠️ ' + String(r.feed || 'منبع') + ' — ' + String(r.error || 'خطای دریافت') + '</div>');
-      reportEl.innerHTML = reports.join('') || '<div class="pull-report-item fail">هیچ فید فعالی ثبت نشده است.</div>';
+      reportEl.replaceChildren();
+      const reports=data?.reports||[];
+      for(const r of reports)reportEl.append(RadinUI.element('div',{
+        className:'pull-report-item '+(r.ok?'ok':'fail'),
+        text:r.ok?'✅ '+String(r.feed||'منبع')+' — '+Number(r.fetched||0)+' خبر بررسی شد؛ '+Number(r.newItems||0)+' خبر جدید.'
+          :'⚠️ '+String(r.feed||'منبع')+' — '+String(r.error||'خطای دریافت')
+      }));
+      if(!reports.length)reportEl.textContent='هیچ فید فعالی ثبت نشده است.';
       document.getElementById('statUpdated').textContent = 'هم‌اکنون';
       await renderRecentNews();
     }catch(e){
@@ -875,36 +864,14 @@ body{background:#f2f6f8}
       .select('id,category,title,image_url,pub_date,published,review_status,source_url')
       .order('pub_date', { ascending: false }).limit(30);
     if (error){
-      el.innerHTML = `<p style="color:#c94b4b;font-size:13px;">خطا در بارگذاری: ${error.message}</p>`;
+      el.textContent = 'خطا در بارگذاری: '+error.message;
       return;
     }
     if (!data || data.length === 0){
       el.innerHTML = '<p style="font-size:12.5px;color:#aab4c2;">هنوز خبری دریافت نشده است.</p>';
       return;
     }
-    const pending = data.filter(item => !item.published && item.review_status !== 'rejected');
-    const published = data.filter(item => item.published);
-    el.innerHTML = `
-      <h4 style="margin:8px 0 12px;">صف بررسی (${pending.length})</h4>
-      ${pending.length ? pending.map(item => `
-        <div class="recent-news-item">
-          <div class="thumb" style="background-image:url('${item.image_url || ''}')"></div>
-          <span class="cat-tag">${item.category || 'عمومی'}</span>
-          <span class="title">${item.title || 'بدون عنوان'}</span>
-          <span class="time">${KR.relTime(new Date(item.pub_date))}</span>
-          <button class="unpub-btn" data-action="publish" data-id="${item.id}">تأیید و انتشار در تلگرام</button>
-          <button class="unpub-btn" data-action="reject" data-id="${item.id}">رد خبر</button>
-        </div>`).join('') : '<p style="color:#8993a3;font-size:13px;">خبر تأییدنشده‌ای در این فهرست نیست.</p>'}
-      <h4 style="margin:22px 0 12px;">آخرین خبرهای منتشرشده (${published.length})</h4>
-      ${published.slice(0,8).map(item => `
-        <div class="recent-news-item">
-          <div class="thumb" style="background-image:url('${item.image_url || ''}')"></div>
-          <span class="cat-tag">${item.category || 'عمومی'}</span>
-          <span class="title">${item.title || 'بدون عنوان'}</span>
-          <span class="time">${KR.relTime(new Date(item.pub_date))}</span>
-          <span class="cat-tag">منتشرشده</span>
-        </div>`).join('')}
-    `;
+    RadinUI.renderNews(el,data,KR.relTime);
     el.querySelectorAll('button[data-action]').forEach(button => {
       button.addEventListener('click', async () => {
         const action = button.dataset.action;
@@ -1101,13 +1068,15 @@ body{background:#f2f6f8}
     if(!sources.length){wrap.textContent='هنوز منبعی ثبت نشده است.';return;}
     sources.forEach((src,i)=>{
       const row=document.createElement('div');row.className='feed-row';row.style.flexWrap='wrap';
-      row.innerHTML=`<select data-si="${i}" data-sf="source_type" style="max-width:130px;border:1px solid #e3e7ee;border-radius:8px;padding:9px;font-family:inherit"><option value="rss" ${src.source_type==='rss'?'selected':''}>RSS</option><option value="website" ${src.source_type==='website'?'selected':''}>وب‌سایت</option><option value="telegram" ${src.source_type==='telegram'?'selected':''}>کانال تلگرام*</option></select>
-      <input data-si="${i}" data-sf="name" value="${String(src.name||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;')}" placeholder="نام منبع" style="max-width:150px">
-      <input data-si="${i}" data-sf="source_url" value="${String(src.source_url||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;')}" placeholder="آدرس RSS / سایت / @channel" style="min-width:220px">
-      <input data-si="${i}" data-sf="category" value="${String(src.category||'عمومی').replace(/"/g,'&quot;')}" placeholder="دسته" style="max-width:100px">
-      <input data-si="${i}" data-sf="fetch_interval_minutes" type="number" min="5" max="1440" value="${src.fetch_interval_minutes||15}" title="بازه بررسی" style="max-width:80px">
-      <label style="display:flex;align-items:center;gap:5px;font-size:12px"><input data-si="${i}" data-sf="enabled" type="checkbox" ${src.enabled!==false?'checked':''}> فعال</label>
-      <button data-sremove="${i}" title="حذف منبع">✕</button>`;
+      const safeRow=RadinUI.inputRow([
+        {key:'source_type',value:src.source_type,options:[['rss','RSS'],['website','وب‌سایت'],['telegram','کانال تلگرام']]},
+        {key:'name',value:src.name,label:'نام منبع'}, {key:'source_url',value:src.source_url,label:'آدرس منبع',width:'320px'},
+        {key:'category',value:src.category||'عمومی',label:'دسته'},
+        {key:'fetch_interval_minutes',value:src.fetch_interval_minutes||15,type:'number',min:5,max:1440,label:'بازه بررسی'},
+        {key:'include_images',value:src.include_images!==false,type:'checkbox',label:'تصویر'},
+        {key:'enabled',value:src.enabled!==false,type:'checkbox',label:'فعال'}
+      ],i,'source');
+      row.replaceChildren(...safeRow.childNodes);
       wrap.appendChild(row);
     });
     wrap.querySelectorAll('[data-sremove]').forEach(b=>b.addEventListener('click',()=>{const i=Number(b.dataset.sremove);if(sources[i].id)deletedSourceIds.push(sources[i].id);sources.splice(i,1);renderSources();}));
