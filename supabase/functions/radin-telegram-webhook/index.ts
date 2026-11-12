@@ -369,8 +369,8 @@ Deno.serve(async (req: Request) => {
 
   const showScheduledQueue = async (chatId: number | string, messageId?: number) => {
     const { data: items, error } = await db.from("news_items")
-      .select("id,title,rewritten_title,scheduled_at,review_status,editorial_revision")
-      .eq("published", false).not("scheduled_at", "is", null)
+      .select("id,title,rewritten_title,scheduled_at,review_status,editorial_revision,publication_state")
+      .eq("published", false).not("scheduled_at", "is", null).not("publication_state", "in", "(sent,blocked)")
       .order("scheduled_at", { ascending: true }).limit(8);
     if (error) {
       await telegram("sendMessage", { chat_id: chatId, text: "خواندن صف زمان‌بندی ناموفق بود." });
@@ -384,8 +384,9 @@ Deno.serve(async (req: Request) => {
       const when = new Intl.DateTimeFormat("fa-IR", { dateStyle: "short", timeStyle: "short", timeZone: "Asia/Tehran" }).format(new Date(item.scheduled_at));
       lines.push((index + 1) + ") " + when + " — " + title);
       const actions: any[] = [];
-      actions.push({ text: "⚡ انتشار فوری", callback_data: "botqueue:publish:" + item.id + ":" + Number(item.editorial_revision || 1) });
-      actions.push({ text: "لغو", callback_data: "botqueue:cancel:" + item.id });
+      const shortTitle=title.slice(0,42);
+      actions.push({ text: "⚡ انتشار: " + shortTitle, callback_data: "botqueue:publish:" + item.id + ":" + Number(item.editorial_revision || 1) });
+      actions.push({ text: "لغو: " + shortTitle, callback_data: "botqueue:cancel:" + item.id });
       keyboard.push(actions);
     });
     if (!list.length) lines.push("صف زمان‌بندی‌شده خالی است.");
@@ -651,8 +652,8 @@ Deno.serve(async (req: Request) => {
       }
       const itemId = parts[2] || "";
       const { data: queue, error } = await db.from("news_items")
-        .select("id,title,rewritten_title,scheduled_at,editorial_revision")
-        .eq("published", false).not("scheduled_at", "is", null)
+        .select("id,title,rewritten_title,scheduled_at,editorial_revision,publication_state")
+        .eq("published", false).not("scheduled_at", "is", null).not("publication_state", "in", "(sent,blocked)")
         .order("scheduled_at", { ascending: true }).limit(200);
       if (error) {
         await answerCallback(String(callback.id), "خواندن صف ناموفق بود.");
