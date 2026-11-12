@@ -391,7 +391,8 @@ Deno.serve(async (req: Request) => {
     });
     if (!list.length) lines.push("صف زمان‌بندی‌شده خالی است.");
     const { data: waiting } = await db.from("radin_preview_jobs")
-      .select("item_id,state,news_items(title,rewritten_title)").in("state", ["queued", "processing", "failed"])
+      .select("item_id,state,news_items!inner(title,rewritten_title,published,publication_state)").in("state", ["queued", "processing", "failed"])
+      .eq("news_items.published", false).eq("news_items.publication_state", "idle")
       .order("requested_at", { ascending: false }).limit(8);
     if (waiting?.length) {
       lines.push("", "⏳ صف آماده‌سازی — جدیدترین خبر اول:");
@@ -646,6 +647,7 @@ Deno.serve(async (req: Request) => {
       if (action === "discard") {
         const discardId=parts[2]||"", chat=callback.message?.chat?.id;
         const {data:changed,error}=await db.from("news_items").update({scheduled_at:null,publication_state:"blocked",review_status:"pending",updated_at:new Date().toISOString()}).eq("id",discardId).eq("published",false).select("id").maybeSingle();
+        await db.from("radin_preview_jobs").delete().eq("item_id",discardId).in("state",["queued","processing","failed"]);
         await answerCallback(String(callback.id),!error&&changed?"خبر از صف حذف شد.":"حذف از صف انجام نشد."); await showScheduledQueue(chat,messageId); return json({ok:true});
       }
       if (action === "publish") {
