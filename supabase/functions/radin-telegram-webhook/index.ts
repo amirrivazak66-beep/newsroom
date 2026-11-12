@@ -369,7 +369,7 @@ Deno.serve(async (req: Request) => {
 
   const showScheduledQueue = async (chatId: number | string, messageId?: number) => {
     const { data: items, error } = await db.from("news_items")
-      .select("id,title,rewritten_title,scheduled_at,review_status")
+      .select("id,title,rewritten_title,scheduled_at,review_status,editorial_revision")
       .eq("published", false).not("scheduled_at", "is", null)
       .order("scheduled_at", { ascending: true }).limit(8);
     if (error) {
@@ -384,6 +384,7 @@ Deno.serve(async (req: Request) => {
       const when = new Intl.DateTimeFormat("fa-IR", { dateStyle: "short", timeStyle: "short", timeZone: "Asia/Tehran" }).format(new Date(item.scheduled_at));
       lines.push((index + 1) + ") " + when + " — " + title);
       const actions: any[] = [];
+      actions.push({ text: "⚡ انتشار فوری", callback_data: "botqueue:publish:" + item.id + ":" + Number(item.editorial_revision || 1) });
       actions.push({ text: "لغو", callback_data: "botqueue:cancel:" + item.id });
       keyboard.push(actions);
     });
@@ -400,13 +401,17 @@ Deno.serve(async (req: Request) => {
       }
     }
     const { data: readyWaiting } = await db.from("news_items")
-      .select("title").eq("published", false).eq("review_status", "pending").is("scheduled_at", null)
+      .select("id,title,rewritten_title,editorial_revision").eq("published", false).eq("review_status", "pending").is("scheduled_at", null)
       .in("source_type", ["telegram", "website"]).in("telegram_chat_id", adminIds)
       .not("graphic_image_url", "is", null).not("telegram_preview_message_id", "is", null)
       .order("created_at", { ascending: false }).limit(5);
     if (readyWaiting?.length) {
       lines.push("", "✅ آماده و منتظر روشن‌شدن صف یا ظرفیت:");
-      for (const item of readyWaiting) lines.push(String(item.title || "خبر دریافتی").slice(0, 70));
+      for (const item of readyWaiting) {
+        const title=String(item.rewritten_title||item.title||"خبر دریافتی").replace(/\s+/g," ").slice(0,70);
+        lines.push("• "+title);
+        keyboard.push([{text:"⚡ انتشار فوری: "+title.slice(0,38),callback_data:"botqueue:publish:"+item.id+":"+Number(item.editorial_revision||1)}]);
+      }
     }
     lines.push("", "ترتیب خودکار بر اساس جدیدترین دریافت است؛ خبرهای نزدیک زمان انتشار جابه‌جا نمی‌شوند.");
     keyboard.push([{ text: "🔄 تازه‌سازی", callback_data: "botqueue:refresh" }, { text: "↩️ تنظیمات ربات", callback_data: "botsettings:refresh" }]);
@@ -636,9 +641,17 @@ Deno.serve(async (req: Request) => {
         await showScheduledQueue(chat, messageId);
         return json({ ok: true });
       }
+      if (action === "publish") {
+        const itemId=parts[2]||"", expectedRevision=Number(parts[3]||0), chat=callback.message?.chat?.id;
+        const response=await fetch(supabaseUrl+"/functions/v1/radin-publish-news",{method:"POST",headers:{"content-type":"application/json",apikey:serviceKey,authorization:"Bearer "+serviceKey,"x-radin-telegram-secret":webhookSecret},body:JSON.stringify({id:itemId,action:"publish",expected_revision:expectedRevision})});
+        let result:any={};try{result=await response.json();}catch{}
+        if(!response.ok||!result.ok){await answerCallback(String(callback.id),String(result.error||"انتشار فوری انجام نشد").slice(0,180));await showScheduledQueue(chat,messageId);return json({ok:true});}
+        await answerCallback(String(callback.id),"خبر بلافاصله منتشر شد.");
+        await showScheduledQueue(chat,messageId);return json({ok:true});
+      }
       const itemId = parts[2] || "";
       const { data: queue, error } = await db.from("news_items")
-        .select("id,title,rewritten_title,scheduled_at")
+        .select("id,title,rewritten_title,scheduled_at,editorial_revision")
         .eq("published", false).not("scheduled_at", "is", null)
         .order("scheduled_at", { ascending: true }).limit(200);
       if (error) {
