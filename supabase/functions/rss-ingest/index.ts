@@ -1,4 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { publicSourceFetch, limitedBody } from "../_shared/public-fetch.ts";
+import { authorizeWebAdmin } from "../_shared/auth.ts";
+import { recordDiagnostic } from "../_shared/diagnostics.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.0";
 
 const cors = {
@@ -67,50 +70,41 @@ function hasAdminMfa(claims: Record<string, unknown>): boolean {
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return new Response(JSON.stringify({ error: "POST required" }), { status: 405, headers: cors });
-  const configuredCronSecret = Deno.env.get("RADIN_CRON_SECRET") || "";
-  const cronAuthorized = configuredCronSecret.length > 0 &&
-    req.headers.get("x-radin-cron-secret") === configuredCronSecret;
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_PUBLISHABLE_KEY");
   if (!supabaseUrl || !serviceKey) return new Response(JSON.stringify({ error: "Server configuration missing" }), { status: 500, headers: cors });
   const db = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
+  // Use the same Vault-backed verifier as the automation runner and publisher.
+  // A service-role bearer token alone must never authorize a cron request.
+  const cronCandidate = req.headers.get("x-radin-cron-secret") || "";
+  let cronAuthorized = false;
+  if (cronCandidate) {
+    const { data: authorized, error: cronError } = await db.rpc("verify_radin_cron_secret", { candidate: cronCandidate });
+    if (cronError) return new Response(JSON.stringify({ error: "Cron authorization unavailable" }), { status: 503, headers: cors });
+    cronAuthorized = authorized === true;
+  }
 
   if (!cronAuthorized) {
-    const authHeader = req.headers.get("authorization") || "";
-    const token = authHeader.match(/^Bearer\s+(.+)$/i)?.[1] || "";
-    if (!token || !anonKey) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: cors });
-    const authClient = createClient(supabaseUrl, anonKey, {
-      global: { headers: { Authorization: authHeader } },
-      auth: { persistSession: false, autoRefreshToken: false }
-    });
-    const { data: authData, error: authError } = await authClient.auth.getUser(token);
-    const user = authData?.user;
-    const email = String(user?.email || "").trim().toLowerCase();
-    const claims = decodeJwtClaims(token);
-    if (authError || !user || !user.email_confirmed_at || !hasAdminMfa(claims)) {
-      return new Response(JSON.stringify({ error: "Admin second factor required" }), { status: 403, headers: cors });
-    }
-    const { data: allowed, error: allowError } = await db.from("web_admin_emails")
-      .select("email").eq("email", email).eq("active", true).maybeSingle();
-    if (allowError) return new Response(JSON.stringify({ error: "Admin authorization unavailable" }), { status: 500, headers: cors });
-    if (!allowed) return new Response(JSON.stringify({ error: "Admin only" }), { status: 403, headers: cors });
+    const authorized=await authorizeWebAdmin(db,req.headers.get("authorization")||"");
+    if(!authorized.ok)return new Response(JSON.stringify({error:authorized.error}),{status:authorized.status,headers:cors});
   }
 
   const { data: feeds, error: feedsError } = await db.from("rss_feeds")
-    .select("id,category,url,item_count,include_media,update_interval_minutes")
+    .select("id,category,url,item_count,include_media,update_interval_minutes,last_fetched_at")
     .eq("enabled", true).order("created_at").limit(100);
   if (feedsError) return new Response(JSON.stringify({ error: "Could not load feeds", detail: feedsError.message }), { status: 500, headers: cors });
 
   const reports: Array<Record<string, unknown>> = [];
   let totalFetched = 0, totalUpserted = 0;
   for (const feed of feeds || []) {
+    if(cronAuthorized&&feed.last_fetched_at&&Date.now()-Date.parse(feed.last_fetched_at)<Math.max(5,Number(feed.update_interval_minutes)||15)*60000){reports.push({feed:hostOf(feed.url),ok:true,skipped:"interval_not_due"});continue;}
     try {
       const url = new URL(feed.url);
       if (!["http:", "https:"].includes(url.protocol)) throw new Error("Unsupported feed protocol");
-      const response = await fetch(url.toString(), { headers: { "User-Agent": "KhabarRadinBot/1.0 (+https://khabarradin.ir)", "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.5" }, signal: AbortSignal.timeout(12000) });
+      const response = await publicSourceFetch(url.toString(), { headers: { "User-Agent": "KhabarRadinBot/1.0 (+https://khabarradin.ir)", "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.5" }, signal: AbortSignal.timeout(12000) });
       if (!response.ok) throw new Error("Feed HTTP " + response.status);
-      const xml = await response.text();
+      const xml = new TextDecoder().decode(await limitedBody(response,4_000_000));
       if (xml.length > 4_000_000) throw new Error("Feed response too large");
       const parsed = parseItems(xml, Math.min(50, Math.max(1, Number(feed.item_count) || 10)));
       const rows = parsed.map((item) => ({
@@ -119,25 +113,20 @@ Deno.serve(async (req: Request) => {
         source_url: item.link, source_name: hostOf(feed.url), pub_date: item.pubDate,
         published: false, review_status: "pending",
       }));
-      let newRows = rows;
-      if (rows.length) {
-        const sourceUrls = rows.map((row) => row.source_url);
-        const { data: existingRows, error: existingError } = await db.from("news_items")
-          .select("source_url").in("source_url", sourceUrls);
-        if (existingError) throw existingError;
-        const existingUrls = new Set((existingRows || []).map((row) => row.source_url));
-        newRows = rows.filter((row) => !existingUrls.has(row.source_url));
-        if (newRows.length) {
-          const { error } = await db.from("news_items").insert(newRows);
-          if (error) throw error;
-        }
-      }
+      const recent=rows.filter(row=>Date.parse(row.pub_date)>=Date.now()-48*60*60*1000);
+      const uniqueRows=[...new Map(recent.map(row=>[row.source_url.replace(/([?&])utm_[^&]+/g,"$1").replace(/[?&]$/,""),row])).values()];
+      const batch=await db.rpc("ingest_rss_batch",{p_rows:uniqueRows});
+      if(batch.error)throw batch.error;
+      const newCount=Number(batch.data?.inserted||0);
       await db.from("rss_feeds").update({ last_fetched_at: new Date().toISOString(), last_error: null }).eq("id", feed.id);
-      totalFetched += parsed.length; totalUpserted += newRows.length;
-      reports.push({ feed: hostOf(feed.url), fetched: parsed.length, newItems: newRows.length, ok: true });
+      totalFetched += parsed.length; totalUpserted += newCount;
+      reports.push({ feed: hostOf(feed.url), fetched: parsed.length, newItems: newCount, ok: true });
     } catch (e) {
-      const message = e instanceof Error ? e.message.slice(0, 500) : "Unknown feed error";
+      // PostgREST errors are plain objects, not instances of Error.
+      const message = (e && typeof e === "object" && "message" in e && typeof e.message === "string"
+        ? e.message : "Unknown feed error").slice(0, 500);
       await db.from("rss_feeds").update({ last_fetched_at: new Date().toISOString(), last_error: message }).eq("id", feed.id);
+      await recordDiagnostic(db,{component:"rss",operation:"ingest",error_code:"feed_failed",error_message:message});
       reports.push({ feed: hostOf(feed.url), fetched: 0, ok: false, error: message });
     }
   }

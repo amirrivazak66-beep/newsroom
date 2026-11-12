@@ -1,314 +1,56 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.0";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Content-Type": "application/json; charset=utf-8"
-};
-const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
-  status, headers: corsHeaders
-});
-
-function decodeJwtClaims(token: string): Record<string, unknown> {
-  try {
-    const encoded = token.split(".")[1];
-    if (!encoded) return {};
-    const base64 = encoded.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(encoded.length / 4) * 4, "=");
-    const binary = atob(base64);
-    const bytes = Uint8Array.from(binary, ch => ch.charCodeAt(0));
-    return JSON.parse(new TextDecoder().decode(bytes));
-  } catch { return {}; }
-}
-
-function hasAdminMfa(claims: Record<string, unknown>): boolean {
-  return claims.aal === "aal2";
-}
-
-Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
-  if (req.method !== "POST") return json({ error: "POST required" }, 405);
-
-  const telegramSecret = Deno.env.get("TELEGRAM_WEBHOOK_SECRET") || "";
-  const suppliedTelegramSecret = req.headers.get("x-radin-telegram-secret") || "";
-  const telegramAdmin = Boolean(telegramSecret) && suppliedTelegramSecret.length === telegramSecret.length && suppliedTelegramSecret === telegramSecret;
-  const cronCandidate = req.headers.get("x-radin-cron-secret") || "";
-  const authHeader = req.headers.get("authorization") || "";
-  const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_PUBLISHABLE_KEY");
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  if (!supabaseUrl || !anonKey || !serviceKey) return json({ error: "Server configuration missing" }, 500);
-  const db = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
-  const recordAiUsage = async (itemId: string, task: string, status: string, usage?: any) => {
-    const inputTokens = Number.isFinite(Number(usage?.prompt_tokens ?? usage?.input_tokens)) ? Number(usage?.prompt_tokens ?? usage?.input_tokens) : null;
-    const outputTokens = Number.isFinite(Number(usage?.completion_tokens ?? usage?.output_tokens)) ? Number(usage?.completion_tokens ?? usage?.output_tokens) : null;
-    const inputRate = 0.15, outputRate = 0.60;
-    const cost = inputTokens !== null && outputTokens !== null ? (inputTokens * inputRate + outputTokens * outputRate) / 1000000 : null;
-    const { error } = await db.from("ai_usage_events").insert({
-      item_id: itemId, provider: "openai", model: "gpt-4o-mini", task, status,
-      input_tokens: inputTokens, output_tokens: outputTokens, estimated_cost_usd: cost,
-      cost_known: cost !== null, rate_snapshot: { rate_date: "2026-10-31", input_usd_per_million: inputRate, output_usd_per_million: outputRate },
-      raw_usage: usage || null,
-    });
-    if (error) console.error("AI usage event could not be saved", error.message);
-  };
-
-  let cronAdmin = false;
-  if (cronCandidate) {
-    const { data: authorized } = await db.rpc("verify_radin_cron_secret", { candidate: cronCandidate });
-    cronAdmin = authorized === true;
+import { authorizeWorkflow } from "../_shared/auth.ts";
+import { editorialCaption, editorialPublishError } from "../_shared/editorial.ts";
+import { recordDiagnostic } from "../_shared/diagnostics.ts";
+const publishCors={"Access-Control-Allow-Origin":"https://amirrivazak66-beep.github.io","Access-Control-Allow-Headers":"authorization,apikey,content-type,x-client-info","Access-Control-Allow-Methods":"POST,OPTIONS","Content-Type":"application/json; charset=utf-8"};
+const publishJson=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:publishCors});
+Deno.serve(async(req:Request)=>{
+ if(req.method==='OPTIONS')return new Response('ok',{headers:publishCors});
+ if(req.method!=='POST')return publishJson({error:'POST required'},405);
+ const url=Deno.env.get('SUPABASE_URL')||'',key=Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')||'',secret=Deno.env.get('TELEGRAM_WEBHOOK_SECRET')||'';
+ if(!url||!key)return publishJson({error:'server_configuration_missing'},500);
+ const db=createClient(url,key,{auth:{persistSession:false,autoRefreshToken:false}});
+ const auth=await authorizeWorkflow(db,req,key,secret);
+ if(!auth.ok)return publishJson({error:auth.error},auth.status);
+ let body:any;try{const raw=await req.text();if(raw.length>10000)return publishJson({error:'request_too_large'},413);body=JSON.parse(raw);}catch{return publishJson({error:'invalid_json'},400);}
+ if(!/^[0-9a-f-]{36}$/i.test(String(body.id||''))||!['publish','reject'].includes(body.action))return publishJson({error:'invalid_publication_request'},400);
+ if(body.action==='reject'){
+  if(auth.mode==='cron')return publishJson({error:'human_action_required'},403);
+  const {data,error}=await db.from('news_items').update({review_status:'rejected',scheduled_at:null}).eq('id',body.id).eq('published',false).not('publication_state','in','(claimed,sending,unknown)').select('id').maybeSingle();
+  return error||!data?publishJson({error:'story_not_rejectable'},409):publishJson({ok:true,action:'rejected'});
+ }
+ const scheduled=body.scheduled===true;
+ if(scheduled&&auth.mode!=='cron'||!scheduled&&auth.mode==='cron')return publishJson({error:'invalid_publication_mode'},403);
+ const {data:claim,error:claimError}=await db.rpc('claim_editorial_publication',{p_item_id:body.id,p_actor:auth.actor,p_scheduled:scheduled,p_expected_revision:Number.isInteger(body.expected_revision)?body.expected_revision:null});
+ if(claimError)return publishJson({error:'publication_claim_failed'},503);
+ if(claim?.error)return publishJson({error:claim.error,retryable:false},claim.status||409);
+ if(!claim?.attempt_id||!claim.payload)return publishJson({error:'publication_claim_failed'},503);
+ const trace=claim.trace_id,attempt=claim.attempt_id;
+ const finish=async(state:string,code:string|null=null,messageId:number|null=null,retryable=false,retrySeconds=60)=>db.rpc('finish_publication_send',{p_attempt:attempt,p_message_id:messageId,p_state:state,p_error:code,p_retryable:retryable,p_retry_seconds:retrySeconds});
+ const invalid=editorialPublishError(claim.payload,claim.destination);
+ const token=Deno.env.get('BOT_TOKEN')||'';
+ if(invalid||!token){await finish('blocked',invalid||'bot_token_missing');return publishJson({error:invalid||'bot_token_missing',trace_id:trace,retryable:false},invalid==='caption_too_long'?413:409);}
+ const {data:started,error:startError}=await db.rpc('start_publication_send',{p_attempt:attempt});
+ if(startError||started!==true)return publishJson({error:'publication_start_uncertain',trace_id:trace,retryable:false},409);
+ const caption=editorialCaption(claim.payload,claim.destination);
+ try{
+  const video=claim.payload.video_file_id;const method=video?'sendVideo':'sendPhoto';
+  const response=await fetch('https://api.telegram.org/bot'+token+'/'+method,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(video?{chat_id:claim.destination,video,cover:claim.payload.graphic_url,caption,parse_mode:'HTML',supports_streaming:true}:{chat_id:claim.destination,photo:claim.payload.graphic_url,caption,parse_mode:'HTML'}),signal:AbortSignal.timeout(45000)});
+  const result=await response.json().catch(()=>null);
+  if(response.ok&&result?.ok===true&&Number.isSafeInteger(result.result?.message_id)){
+   const messageId=result.result.message_id;const completed=await finish('sent',null,messageId);
+   if(completed.error||completed.data!==true){await recordDiagnostic(db,{trace_id:trace,item_id:body.id,component:'publication',operation:'persist_receipt',error_code:'receipt_commit_uncertain'});return publishJson({ok:false,state:'unknown',error:'receipt_commit_uncertain',message_id:messageId,trace_id:trace,retryable:false},202);}
+   await db.from('bot_activity').insert({event_type:'published',item_id:body.id,actor:auth.actor,details:{message_id:messageId,revision:claim.revision,trace_id:trace}});
+   await recordDiagnostic(db,{trace_id:trace,item_id:body.id,component:'publication',operation:'send',severity:'info',outcome:'success',metadata:{revision:claim.revision}});
+   return publishJson({ok:true,message_id:messageId,trace_id:trace,revision:claim.revision});
   }
-  if (!telegramAdmin && !cronAdmin && !authHeader.startsWith("Bearer ")) return json({ error: "Authentication required" }, 401);
-
-  if (!telegramAdmin && !cronAdmin) {
-    const token = authHeader.match(/^Bearer\s+(.+)$/i)?.[1] || "";
-    const authClient = createClient(supabaseUrl, anonKey, {
-      global: { headers: { Authorization: authHeader } },
-      auth: { persistSession: false, autoRefreshToken: false }
-    });
-    const { data: authData, error: authError } = await authClient.auth.getUser(token);
-    const user = authData?.user;
-    const email = String(user?.email || "").trim().toLowerCase();
-    const claims = decodeJwtClaims(token);
-    if (authError || !user || !user.email_confirmed_at || !hasAdminMfa(claims)) {
-      return json({ error: "Admin second factor required" }, 403);
-    }
-    const { data: allowed, error: allowError } = await db.from("web_admin_emails")
-      .select("email").eq("email", email).eq("active", true).maybeSingle();
-    if (allowError) return json({ error: "Admin authorization unavailable" }, 500);
-    if (!allowed) return json({ error: "Admin only" }, 403);
-  }
-
-  let payload: { id?: string; action?: string; scheduled?: boolean };
-  try { payload = await req.json(); } catch { return json({ error: "Invalid JSON" }, 400); }
-  if (!payload.id || !["publish", "reject"].includes(payload.action || "")) {
-    return json({ error: "id and action=publish|reject required" }, 400);
-  }
-  if (payload.scheduled && !cronAdmin) return json({ error: "Scheduled publishing is internal only" }, 403);
-  const { data: item, error: itemError } = await db.from("news_items")
-    .select("id,title,summary,original_summary,rewritten_title,rewritten_text,category,source_url,source_name,source_type,image_url,original_image_url,graphic_image_url,video_file_id,pub_date,published,review_status,telegram_message_id,scheduled_at,telegram_headline_edited,telegram_caption_edited")
-    .eq("id", payload.id).maybeSingle();
-  if (itemError) return json({ error: "Could not load story" }, 500);
-  if (!item) return json({ error: "Story not found" }, 404);
-
-  if (payload.action === "reject") {
-    const { error } = await db.from("news_items")
-      .update({ published: false, review_status: "rejected", updated_at: new Date().toISOString() })
-      .eq("id", item.id);
-    if (error) return json({ error: "Could not reject story" }, 500);
-    await db.from("bot_activity").insert({event_type:"rejected",item_id:item.id,actor:telegramAdmin?"telegram":"admin",details:{title:item.rewritten_title||item.title}});
-    return json({ ok: true, action: "rejected" });
-  }
-
-  if (payload.scheduled && String(item.video_file_id || "").trim()) return json({ error: "Forwarded videos require an individual preview approval." }, 409);
-  if (item.published || item.telegram_message_id) return json({ error: "Story may already have been published; refusing duplicate send" }, 409);
-  if (item.review_status === "rejected") return json({ error: "Rejected story cannot be published without re-review" }, 409);
-  if (item.review_status === "publishing" && !payload.scheduled) return json({ error: "خبر در حال انتشار زمان‌بندی‌شده است؛ کمی بعد دوباره بررسی کنید." }, 409);
-  if (item.scheduled_at && new Date(item.scheduled_at).getTime() > Date.now() && !payload.scheduled) {
-    return json({ error: "این خبر برای زمان مشخصی زمان‌بندی شده است؛ برای انتشار فوری ابتدا زمان‌بندی را لغو کنید." }, 409);
-  }
-
-  if (item.source_type === "telegram" && !String(item.rewritten_title || "").trim()) {
-    return json({ error: "تیتر هوش مصنوعی برای پوستر آماده نیست؛ خبر بدون تیتر منتشر نمی‌شود." }, 409);
-  }
-
-  // Require the branded graphic before sending anything to Telegram.
-  const approvedGraphicUrl = String(item.graphic_image_url || "").trim();
-  if (!/^https?:\/\//i.test(approvedGraphicUrl)) {
-    return json({ error: "تصویر گرافیکی خبر هنوز آماده نشده است؛ پس از آماده‌شدن تصویر دوباره تلاش کنید." }, 409);
-  }
-
-  if (!String(item.original_image_url || "").startsWith("http")) return json({ error: "تصویر اصلی در قالب نهایی تأیید نشده است." }, 409);
-
-  const botToken = Deno.env.get("BOT_TOKEN");
-  if (!botToken) return json({ error: "Bot token is not configured" }, 500);
-  const { data: settings } = await db.from("bot_settings").select("channel_username,review_required,auto_publish").eq("id", "main").maybeSingle();
-  if (payload.scheduled && settings?.auto_publish !== true) return json({ error: "انتشار زمان‌بندی‌شده در تنظیمات ربات خاموش است." }, 409);
-  const channel = String(settings?.channel_username || "@radinnews").trim();
-  if (!channel.startsWith("@")) return json({ error: "Destination channel must be a public @username" }, 400);
-
-  let title = String(item.title || "").trim();
-  let summary = String(item.summary || "").trim();
-  const category = String(item.category || "").trim();
-
-  // Optional rewrite: when no paid text API is configured, publish the original RSS text after human approval.
-  const openAiKey = Deno.env.get("OPENAI_API_KEY");
-  let rewriteApplied = false;
-  if (openAiKey && (title || summary) && item.source_type !== "telegram") {
-    try {
-      const rewriteResponse = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: { "Authorization": `Bearer ${openAiKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "gpt-4o-mini", temperature: 0.4, response_format: { type: "json_object" },
-          messages: [
-            { role: "system", content: "تو دبیر تحریریه خبر رادین به زبان فارسی هستی. عنوان و خلاصه را موجز و حرفه‌ای بازنویسی کن؛ فقط اطلاعات موجود را حفظ کن و هیچ جزئیات، نقل‌قول یا قطعیت تازه‌ای نساز. لحن خنثی و دقیق باشد. فقط JSON معتبر با کلیدهای title و summary برگردان." },
-            { role: "user", content: JSON.stringify({ title, summary, category }) }
-          ]
-        })
-      });
-      const rewriteData: any = await rewriteResponse.json().catch(() => ({}));
-      await recordAiUsage(item.id, "editorial_rewrite", rewriteResponse.ok ? "succeeded" : "failed", rewriteData?.usage);
-      if (rewriteResponse.ok) {
-        const content = rewriteData?.choices?.[0]?.message?.content;
-        if (typeof content === "string") {
-          const rewritten = JSON.parse(content);
-          const nextTitle = String(rewritten.title || "").trim();
-          const nextSummary = String(rewritten.summary || "").trim();
-          if (nextTitle) { title = nextTitle; if (nextSummary) summary = nextSummary; rewriteApplied = true; }
-        }
-      } else {
-        console.error("Editorial rewrite failed; keeping original RSS text", rewriteResponse.status);
-      }
-    } catch (error) {
-      await recordAiUsage(item.id, "editorial_rewrite", "network_error");
-      console.error("Editorial rewrite failed; keeping original RSS text", String(error));
-    }
-  }
-  if (item.source_type === "telegram") {
-    if (item.telegram_headline_edited && String(item.rewritten_title || "").trim()) {
-      title = String(item.rewritten_title).trim();
-      rewriteApplied = true;
-    }
-    if (item.telegram_caption_edited && String(item.rewritten_text || "").trim()) {
-      summary = String(item.rewritten_text).trim();
-      rewriteApplied = true;
-    }
-  }
-  const stripLinksWithAdjacentEmoji = (value: string) => {
-    const emoji = String.raw`(?:\p{Extended_Pictographic}(?:\uFE0F|\uFE0E)?(?:\u{1F3FB}-\u{1F3FF})?(?:\u200D\p{Extended_Pictographic}(?:\uFE0F|\uFE0E)?(?:\u{1F3FB}-\u{1F3FF})?)*|\p{Regional_Indicator}{2})`;
-    const link = String.raw`(?:https?:\/\/|www\.)[^\s<>]+|(?:[\p{L}\p{N}-]+\.)+[a-z]{2,}(?:\/[^\s<>]*)?|@[A-Za-z0-9_]{5,}`;
-    const pattern = new RegExp(`(?:${emoji}[ \\t]*)*(?:${link})(?:[ \\t]*${emoji})*`, "giu");
-    return value.replace(pattern, "").replace(/[ \\t]+([,،؛:!?؟])/g, "$1").replace(/([,،؛:!?؟])[ \\t]+([,،؛:!?؟])/g, "$1").trim();
-  };
-  const stripTelegramTrace = (value: string) => stripLinksWithAdjacentEmoji(value);
-  if (item.source_type === "telegram") {
-    if (item.telegram_caption_edited && String(item.rewritten_text || "").trim()) {
-      summary = String(item.rewritten_text).trim();
-    } else {
-      summary = String(item.original_summary || item.summary || "").trim();
-    }
-    summary = stripTelegramTrace(summary);
-  }
-  const combinedForEmoji = (title + " " + summary + " " + category).toLowerCase();
-  const emojiRules: Array<[RegExp, string]> = [
-    [/زلزله|زمین.?لرزه|earthquake/, "🌍"],
-    [/جنگ|حمله|موشک|پهپاد|انفجار|ارتش|نظامی|اسرائیل|غزه|اوکراین/, "🚨"],
-    [/انتخابات|رئیس.?جمهور|رییس.?جمهور|پارلمان|مجلس|دولت|وزیر|سیاسی/, "🏛️"],
-    [/اقتصاد|تورم|ارز|دلار|طلا|بورس|بازار|بانک|قیمت|تجارت/, "💹"],
-    [/فوت|درگذشت|جان.?باخت|کشته|مرگ/, "🕯️"],
-    [/هواشناسی|باران|برف|طوفان|سیل|آب.?وهوا|دما/, "🌦️"],
-    [/فناوری|هوش مصنوعی|اینترنت|سایبری|موبایل|نرم.?افزار/, "💻"],
-    [/فوتبال|ورزش|تیم ملی|لیگ|قهرمانی|مسابقه/, "⚽"],
-    [/سلامت|پزشکی|بیمارستان|واکسن|دارو|ویروس/, "🩺"],
-    [/مدرسه|دانشگاه|آموزش|دانشجو|کنکور/, "🎓"],
-    [/تصادف|آتش.?سوزی|حادثه|نجات/, "🚑"],
-    [/جهان|بین.?الملل|سازمان ملل|دیپلمات/, "🌐"]
-  ];
-  const relatedEmoji = emojiRules.find(([pattern]) => pattern.test(combinedForEmoji))?.[1] || "📰";
-  const displayTitle = /^[\p{Extended_Pictographic}]/u.test(title) ? title : relatedEmoji + " " + title;
-  const rawSource = String(item.source_name || "").trim();
-  const sourceLower = rawSource.toLowerCase();
-  const sourceAliases: Record<string, string> = {
-    "mehrnews.com": "مهر",
-    "www.mehrnews.com": "مهر",
-    "irna.ir": "ایرنا",
-    "www.irna.ir": "ایرنا",
-    "isna.ir": "ایسنا",
-    "www.isna.ir": "ایسنا",
-    "asriran.com": "عصر ایران",
-    "www.asriran.com": "عصر ایران",
-    "yjc.ir": "باشگاه خبرنگاران جوان",
-    "www.yjc.ir": "باشگاه خبرنگاران جوان",
-    "tabnak.ir": "تابناک",
-    "www.tabnak.ir": "تابناک",
-    "khabaronline.ir": "خبرآنلاین",
-    "www.khabaronline.ir": "خبرآنلاین",
-    "tasnimnews.com": "تسنیم",
-    "www.tasnimnews.com": "تسنیم"
-  };
-  const sourceName = sourceAliases[sourceLower] || rawSource.replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/$/, "") || "خبر";
-  const escapeHtml = (value: string) => value.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/\x27/g,"&#39;");
-  const rawFullStory = String(item.source_type === "telegram" ? (item.telegram_caption_edited ? item.rewritten_text : (item.original_summary || item.summary)) : (item.rewritten_text || item.original_summary || summary || "")).trim();
-  const cleanedFullStory = item.source_type === "telegram" ? stripTelegramTrace(rawFullStory).trim() : rawFullStory;
-  const originalTelegramText = item.source_type === "telegram" ? stripTelegramTrace(String(item.original_title || item.title || item.rewritten_title || "")).trim() : "";
-  const fullStory = item.source_type === "telegram"
-    ? (/[\p{L}\p{N}]/u.test(cleanedFullStory) ? cleanedFullStory : originalTelegramText)
-    : cleanedFullStory;
-  const dateLabel = (() => {
-    if (!item.pub_date) return "";
-    try {
-      const p = new Intl.DateTimeFormat("fa-IR-u-ca-persian-nu-arabext", { day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Tehran" }).formatToParts(new Date(item.pub_date));
-      const get = (k: string) => p.find(x => x.type === k)?.value || "";
-      const n = (s: string) => Number(s.replace(/[۰-۹]/g, ch => "۰۱۲۳۴۵۶۷۸۹".indexOf(ch)));
-      const day = n(get("day")), year = n(get("year"));
-      const ord = ["","اول","دوم","سوم","چهارم","پنجم","ششم","هفتم","هشتم","نهم","دهم","یازدهم","دوازدهم","سیزدهم","چهاردهم","پانزدهم","شانزدهم","هفدهم","هجدهم","نوزدهم","بیستم","بیست و یکم","بیست و دوم","بیست و سوم","بیست و چهارم","بیست و پنجم","بیست و ششم","بیست و هفتم","بیست و هشتم","بیست و نهم","سی‌ام","سی و یکم"];
-      const card = (v: number): string => { const u=["","یک","دو","سه","چهار","پنج","شش","هفت","هشت","نه"],te=["ده","یازده","دوازده","سیزده","چهارده","پانزده","شانزده","هفده","هجده","نوزده"],t=["","","بیست","سی","چهل","پنجاه","شصت","هفتاد","هشتاد","نود"],hu=["","صد","دویست","سیصد","چهارصد","پانصد","ششصد","هفتصد","هشتصد","نهصد"]; if(!v)return "صفر";const a:string[]=[];if(v>=100){a.push(hu[Math.floor(v/100)]);v%=100}if(v>=10&&v<20)a.push(te[v-10]);else{if(v>=20){a.push(t[Math.floor(v/10)]);v%=10}if(v)a.push(u[v])}return a.join(" و "); };
-      return (ord[day] || get("day")) + " " + get("month") + " " + (year >= 1400 && year < 1500 ? card(year - 1000) : card(year));
-    } catch { return ""; }
-  })();
-  // One image post: Telegram-forwarded items use body-only text; the headline stays out of the caption.
-  const titleCaption = displayTitle;
-  const captionMessage = [
-    item.source_type === "telegram" ? "" : "<b>" + escapeHtml(titleCaption) + "</b>",
-    item.source_type === "telegram" && category === "عمومی" ? "" : (category ? "🏷️ <b>" + escapeHtml(category) + "</b>" : ""),
-    fullStory ? "📝 " + escapeHtml(fullStory) : "",
-    dateLabel ? "🗓️ " + escapeHtml(dateLabel) : "",
-    item.source_type === "telegram" ? "" : "🔎 منبع: " + escapeHtml(sourceName),
-    item.source_type === "telegram" ? "" : "🌐 khabarradin.ir",
-    "📣 @radinnews",
-  ].filter(Boolean).join("\n\n");
-  // Telegram media captions are limited to 1024 characters. Never silently truncate or send a second post.
-  if (captionMessage.length > 1024) {
-    return json({ error: "کپشن کامل از محدودیت ۱۰۲۴ نویسه تلگرام بیشتر است؛ متن خبر باید در مرحله تحریریه کوتاه‌تر و تأیید شود تا همه محتوا در همان یک پست رسانه‌ای قرار گیرد.", caption_length: captionMessage.length, caption_limit: 1024 }, 413);
-  }
-  const imageUrl = approvedGraphicUrl;
-  const hasImage = /^https?:\/\//i.test(imageUrl);
-  const generatedPhoto: Blob | null = null;
-  const sendAsPhoto = Boolean(generatedPhoto) || hasImage;
-  let tg: Response;
-  const videoFileId = String(item.video_file_id || "").trim();
-  if (videoFileId) {
-    tg = await fetch(`https://api.telegram.org/bot${botToken}/sendVideo`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ chat_id: channel, video: videoFileId, cover: approvedGraphicUrl, caption: captionMessage, parse_mode: "HTML", supports_streaming: true })
-    });
-  } else if (sendAsPhoto && generatedPhoto) {
-    const form = new FormData();
-    form.append("chat_id", channel);
-    form.append("photo", generatedPhoto, "radin-editorial.png");
-    form.append("caption", captionMessage);
-    form.append("parse_mode", "HTML");
-    tg = await fetch(`https://api.telegram.org/bot${botToken}/sendPhoto`, { method: "POST", body: form });
-  } else {
-    tg = await fetch(`https://api.telegram.org/bot${botToken}/${sendAsPhoto ? "sendPhoto" : "sendMessage"}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(sendAsPhoto
-        ? { chat_id: channel, photo: imageUrl, caption: captionMessage, parse_mode: "HTML" }
-        : { chat_id: channel, text: captionMessage.replace(/<[^>]+>/g, ""), disable_web_page_preview: true })
-    });
-  }
-  let tgResult: any = {};
-  try { tgResult = await tg.json(); } catch {}
-  if (!tg.ok || !tgResult.ok || !tgResult.result?.message_id) {
-    console.error("Telegram publish failed", tg.status, tgResult?.description || "unknown");
-    return json({ error: "Telegram send failed", detail: tgResult?.description || "Check image URL, bot admin permissions and destination channel" }, 502);
-  }
-
-  const { error: updateError } = await db.from("news_items").update({
-    published: true,
-    review_status: "approved",
-    telegram_message_id: tgResult.result.message_id,
-    processed_at: new Date().toISOString(),
-    updated_at: new Date().toISOString()
-  }).eq("id", item.id).eq("published", false);
-  if (updateError) {
-    console.error("Story sent but DB update failed", item.id, updateError.message);
-    return json({ ok: true, warning: "Sent to Telegram but database update failed; check before retrying", message_id: tgResult.result.message_id }, 200);
-  }
-  await db.from("bot_activity").insert({event_type:"published",item_id:item.id,actor:payload.scheduled?"scheduler":(telegramAdmin?"telegram":"admin"),details:{title:item.rewritten_title||item.title,message_id:tgResult.result.message_id,channel}});
-  return json({ ok: true, channel, message_id: tgResult.result.message_id, caption_mode: "single_media_post_fullest_possible_caption" });
+  // Only an explicit Telegram rejection is a known non-send. Network errors,
+  // invalid receipts and 5xx responses cannot be retried safely automatically.
+  const explicitRejection=result?.ok===false&&response.status>=400&&response.status<500;
+  if(explicitRejection){const retryable=response.status===429;await finish(retryable?'failed':'blocked','telegram_'+response.status,null,retryable,Number(result.parameters?.retry_after)||60);return publishJson({error:'telegram_'+response.status,trace_id:trace,retryable},retryable?429:422);}
+  await finish('unknown','telegram_receipt_uncertain');
+ }catch{await finish('unknown','telegram_network_uncertain');}
+ await recordDiagnostic(db,{trace_id:trace,item_id:body.id,component:'publication',operation:'send',error_code:'publication_unknown'});
+ return publishJson({ok:false,state:'unknown',error:'publication_unknown',trace_id:trace,retryable:false},202);
 });
