@@ -370,7 +370,7 @@ Deno.serve(async (req: Request) => {
   const showScheduledQueue = async (chatId: number | string, messageId?: number) => {
     const { data: items, error } = await db.from("news_items")
       .select("id,title,rewritten_title,scheduled_at,review_status,editorial_revision,publication_state")
-      .eq("published", false).not("scheduled_at", "is", null).not("publication_state", "in", "(sent,blocked)")
+      .eq("published", false).is("telegram_message_id", null).not("scheduled_at", "is", null).not("publication_state", "in", "(sent,blocked)")
       .order("scheduled_at", { ascending: true }).limit(8);
     if (error) {
       await telegram("sendMessage", { chat_id: chatId, text: "خواندن صف زمان‌بندی ناموفق بود." });
@@ -392,7 +392,7 @@ Deno.serve(async (req: Request) => {
     if (!list.length) lines.push("صف زمان‌بندی‌شده خالی است.");
     const { data: waiting } = await db.from("radin_preview_jobs")
       .select("item_id,state,news_items!inner(title,rewritten_title,published,publication_state)").in("state", ["queued", "processing", "failed"])
-      .eq("news_items.published", false).eq("news_items.publication_state", "idle")
+      .eq("news_items.published", false).is("news_items.telegram_message_id", null).eq("news_items.publication_state", "idle")
       .order("requested_at", { ascending: false }).limit(8);
     if (waiting?.length) {
       lines.push("", "⏳ صف آماده‌سازی — جدیدترین خبر اول:");
@@ -403,7 +403,7 @@ Deno.serve(async (req: Request) => {
       }
     }
     const { data: readyWaiting } = await db.from("news_items")
-      .select("id,title,rewritten_title,editorial_revision").eq("published", false).eq("review_status", "pending").is("scheduled_at", null)
+      .select("id,title,rewritten_title,editorial_revision").eq("published", false).is("telegram_message_id", null).eq("review_status", "pending").is("scheduled_at", null)
       .eq("publication_state", "idle")
       .in("source_type", ["telegram", "website"]).in("telegram_chat_id", adminIds)
       .not("graphic_image_url", "is", null).not("telegram_preview_message_id", "is", null)
@@ -661,7 +661,7 @@ Deno.serve(async (req: Request) => {
       const itemId = parts[2] || "";
       const { data: queue, error } = await db.from("news_items")
         .select("id,title,rewritten_title,scheduled_at,editorial_revision,publication_state")
-        .eq("published", false).not("scheduled_at", "is", null).eq("publication_state", "idle")
+        .eq("published", false).is("telegram_message_id", null).not("scheduled_at", "is", null).eq("publication_state", "idle")
         .order("scheduled_at", { ascending: true }).limit(200);
       if (error) {
         await answerCallback(String(callback.id), "خواندن صف ناموفق بود.");
