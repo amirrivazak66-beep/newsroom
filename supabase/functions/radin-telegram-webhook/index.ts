@@ -391,18 +391,19 @@ Deno.serve(async (req: Request) => {
     });
     if (!list.length) lines.push("صف زمان‌بندی‌شده خالی است.");
     const { data: waiting } = await db.from("radin_preview_jobs")
-      .select("item_id,state,news_items(title)").in("state", ["queued", "processing", "failed"])
+      .select("item_id,state,news_items(title,rewritten_title)").in("state", ["queued", "processing", "failed"])
       .order("requested_at", { ascending: false }).limit(8);
     if (waiting?.length) {
       lines.push("", "⏳ صف آماده‌سازی — جدیدترین خبر اول:");
       for (const job of waiting) {
         const status = job.state === "processing" ? "در حال ساخت" : job.state === "failed" ? "نیاز به تلاش مجدد" : "در انتظار ساخت";
         lines.push(status + " — " + String(job.news_items?.title || "خبر دریافتی").slice(0, 70));
-        if (job.state === "failed") keyboard.push([{ text: "🔄 تلاش دوباره", callback_data: "designposter:" + job.item_id }]);
+        if (job.state === "failed") keyboard.push([{ text: "🔄 تلاش دوباره: " + String(job.news_items?.rewritten_title || job.news_items?.title || "خبر").replace(/\s+/g," ").slice(0,52), callback_data: "designposter:" + job.item_id }]);
       }
     }
     const { data: readyWaiting } = await db.from("news_items")
       .select("id,title,rewritten_title,editorial_revision").eq("published", false).eq("review_status", "pending").is("scheduled_at", null)
+      .not("publication_state", "in", "(sent,blocked)")
       .in("source_type", ["telegram", "website"]).in("telegram_chat_id", adminIds)
       .not("graphic_image_url", "is", null).not("telegram_preview_message_id", "is", null)
       .order("created_at", { ascending: false }).limit(5);
@@ -667,7 +668,7 @@ Deno.serve(async (req: Request) => {
       }
       if (action === "cancel") {
         const { data: changed, error: cancelError } = await db.from("news_items")
-          .update({ scheduled_at: null, review_status: "pending", updated_at: new Date().toISOString() })
+          .update({ scheduled_at: null, review_status: "pending", publication_state: "blocked", updated_at: new Date().toISOString() })
           .eq("id", itemId).eq("published", false).not("scheduled_at", "is", null).select("id").maybeSingle();
         if (cancelError || !changed) {
           await answerCallback(String(callback.id), "لغو پست انجام نشد.");
