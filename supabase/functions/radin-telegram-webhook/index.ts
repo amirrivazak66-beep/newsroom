@@ -398,12 +398,12 @@ Deno.serve(async (req: Request) => {
       for (const job of waiting) {
         const status = job.state === "processing" ? "در حال ساخت" : job.state === "failed" ? "نیاز به تلاش مجدد" : "در انتظار ساخت";
         lines.push(status + " — " + String(job.news_items?.title || "خبر دریافتی").slice(0, 70));
-        if (job.state === "failed") keyboard.push([{ text: "🔄 تلاش دوباره: " + String(job.news_items?.rewritten_title || job.news_items?.title || "خبر").replace(/\s+/g," ").slice(0,52), callback_data: "designposter:" + job.item_id }]);
+        if (job.state === "failed") { const retryLabel=String(job.news_items?.rewritten_title || job.news_items?.title || "خبر").replace(/\s+/g," ").slice(0,42); keyboard.push([{ text: "🔄 تلاش دوباره: " + retryLabel, callback_data: "designposter:" + job.item_id }, { text: "لغو: " + retryLabel, callback_data: "botqueue:discard:" + job.item_id }]); }
       }
     }
     const { data: readyWaiting } = await db.from("news_items")
       .select("id,title,rewritten_title,editorial_revision").eq("published", false).eq("review_status", "pending").is("scheduled_at", null)
-      .not("publication_state", "in", "(sent,blocked)")
+      .eq("publication_state", "idle")
       .in("source_type", ["telegram", "website"]).in("telegram_chat_id", adminIds)
       .not("graphic_image_url", "is", null).not("telegram_preview_message_id", "is", null)
       .order("created_at", { ascending: false }).limit(5);
@@ -643,6 +643,11 @@ Deno.serve(async (req: Request) => {
         await showScheduledQueue(chat, messageId);
         return json({ ok: true });
       }
+      if (action === "discard") {
+        const discardId=parts[2]||"", chat=callback.message?.chat?.id;
+        const {data:changed,error}=await db.from("news_items").update({scheduled_at:null,publication_state:"blocked",review_status:"pending",updated_at:new Date().toISOString()}).eq("id",discardId).eq("published",false).select("id").maybeSingle();
+        await answerCallback(String(callback.id),!error&&changed?"خبر از صف حذف شد.":"حذف از صف انجام نشد."); await showScheduledQueue(chat,messageId); return json({ok:true});
+      }
       if (action === "publish") {
         const itemId=parts[2]||"", expectedRevision=Number(parts[3]||0), chat=callback.message?.chat?.id;
         const response=await fetch(supabaseUrl+"/functions/v1/radin-publish-news",{method:"POST",headers:{"content-type":"application/json",apikey:serviceKey,authorization:"Bearer "+serviceKey,"x-radin-telegram-secret":webhookSecret},body:JSON.stringify({id:itemId,action:"publish",expected_revision:expectedRevision})});
@@ -654,7 +659,7 @@ Deno.serve(async (req: Request) => {
       const itemId = parts[2] || "";
       const { data: queue, error } = await db.from("news_items")
         .select("id,title,rewritten_title,scheduled_at,editorial_revision,publication_state")
-        .eq("published", false).not("scheduled_at", "is", null).not("publication_state", "in", "(sent,blocked)")
+        .eq("published", false).not("scheduled_at", "is", null).eq("publication_state", "idle")
         .order("scheduled_at", { ascending: true }).limit(200);
       if (error) {
         await answerCallback(String(callback.id), "خواندن صف ناموفق بود.");
