@@ -888,6 +888,11 @@ body{background:#f2f6f8}
           return;
         }
         try {
+          const { data: currentItem, error: revisionError } = await sb.from('news_items')
+            .select('editorial_revision').eq('id', id).maybeSingle();
+          if (revisionError || !Number.isInteger(currentItem?.editorial_revision)) {
+            throw new Error('نسخهٔ نهایی خبر در دسترس نیست؛ ابتدا پیش‌نمایش را تازه‌سازی کنید.');
+          }
           const response = await fetch(SUPABASE_URL + '/functions/v1/radin-publish-news', {
             method: 'POST',
             headers: {
@@ -895,7 +900,7 @@ body{background:#f2f6f8}
               'apikey': SUPABASE_ANON_KEY,
               'Authorization': 'Bearer ' + token
             },
-            body: JSON.stringify({ id, action })
+            body: JSON.stringify({ id, action, expected_revision: currentItem.editorial_revision })
           });
           const result = await response.json().catch(() => ({}));
           if (!response.ok) throw new Error(result?.error || ('Edge Function HTTP ' + response.status));
