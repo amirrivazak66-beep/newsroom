@@ -888,10 +888,17 @@ body{background:#f2f6f8}
           return;
         }
         try {
-          const { data: result, error: invokeError } = await sb.functions.invoke('radin-publish-news', {
-            body: { id, action }, headers: { Authorization: 'Bearer ' + token }
+          const response = await fetch(SUPABASE_URL + '/functions/v1/radin-publish-news', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'apikey': SUPABASE_ANON_KEY,
+              'Authorization': 'Bearer ' + token
+            },
+            body: JSON.stringify({ id, action })
           });
-          if (invokeError) throw invokeError;
+          const result = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(result?.error || ('Edge Function HTTP ' + response.status));
           if (!result?.ok) throw new Error(result?.error || 'عملیات انجام نشد');
           alert(action === 'publish' ? 'خبر در تلگرام منتشر شد.' : 'خبر رد شد.');
           await renderRecentNews();
