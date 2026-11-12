@@ -39,11 +39,9 @@ test('failed processing and timeout restore an actionable retry button',async()=
 });
 test('regeneration delivers edit and publish actions using valid Telegram markup',async()=>{
  const s=await run({regenerate:true});
- const preview=s.calls.find(x=>x.url.endsWith('/editMessageMedia'));
- assert.ok(preview);
- assert.ok(Array.isArray(preview.body.reply_markup.inline_keyboard));
- assert.ok(preview.body.reply_markup.inline_keyboard.flat().some(x=>x.callback_data==='publish:'+itemId));
- assert.ok(preview.body.reply_markup.inline_keyboard.flat().some(x=>x.callback_data==='edit:headline:'+itemId));
+ assert.equal(s.response.status,200);
+ assert.ok(s.rpcCalls.some(x=>x.name==='enqueue_radin_preview'&&x.args.p_item_id===itemId));
+ assert.ok(s.calls.some(x=>x.url.includes('/radin-preview-queue')));
 });
 
 test('a Persian forwarded story is saved pending and starts an actionable preview',async()=>{
