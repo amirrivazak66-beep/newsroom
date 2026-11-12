@@ -32,7 +32,7 @@
       element('span',{className:'title',text:item.title||'بدون عنوان'}),
       element('span',{className:'time',text:relativeTime(new Date(item.pub_date))})
     ]);
-    if(pending){for(const [action,text] of [['publish','تأیید و انتشار در تلگرام'],['reject','رد خبر']])row.append(element('button',{className:'unpub-btn',text,dataset:{action,id:String(item.id)}}));}
+    if(pending){for(const [action,text] of [['publish','انتشار با پوستر'],['publish_text','انتشار متنی بدون پوستر'],['reject','رد خبر']])row.append(element('button',{className:'unpub-btn',text,dataset:{action,id:String(item.id)}}));}
     else row.append(element('span',{className:'cat-tag',text:'منتشرشده'}));
     return row;
   }

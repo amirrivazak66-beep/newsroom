@@ -876,7 +876,7 @@ body{background:#f2f6f8}
       button.addEventListener('click', async () => {
         const action = button.dataset.action;
         const id = button.dataset.id;
-        const label = action === 'publish' ? 'تأیید و انتشار این خبر در کانال تلگرام' : 'رد این خبر';
+        const label = action === 'publish' ? 'انتشار این خبر با پوستر' : (action === 'publish_text' ? 'انتشار متنی این خبر بدون پوستر' : 'رد این خبر');
         if (!confirm(label + '؟')) return;
         button.disabled = true;
         button.textContent = 'در حال انجام...';
@@ -905,7 +905,7 @@ body{background:#f2f6f8}
           const result = await response.json().catch(() => ({}));
           if (!response.ok) throw new Error(result?.error || ('Edge Function HTTP ' + response.status));
           if (!result?.ok) throw new Error(result?.error || 'عملیات انجام نشد');
-          alert(action === 'publish' ? 'خبر در تلگرام منتشر شد.' : 'خبر رد شد.');
+          alert(action === 'reject' ? 'خبر رد شد.' : (action === 'publish_text' ? 'خبر به‌صورت متنی در تلگرام منتشر شد.' : 'خبر در تلگرام منتشر شد.'));
           await renderRecentNews();
         } catch (err) {
           alert('عملیات ناموفق بود: ' + (err?.message || 'خطای نامشخص'));
