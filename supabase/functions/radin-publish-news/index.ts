@@ -14,7 +14,7 @@ Deno.serve(async(req:Request)=>{
  const auth=await authorizeWorkflow(db,req,key,secret);
  if(!auth.ok)return publishJson({error:auth.error},auth.status);
  let body:any;try{const raw=await req.text();if(raw.length>10000)return publishJson({error:'request_too_large'},413);body=JSON.parse(raw);}catch{return publishJson({error:'invalid_json'},400);}
- if(!/^[0-9a-f-]{36}$/i.test(String(body.id||''))||!['publish','reject'].includes(body.action))return publishJson({error:'invalid_publication_request'},400);
+ if(!/^[0-9a-f-]{36}$/i.test(String(body.id||''))||!['publish','publish_text','reject'].includes(body.action))return publishJson({error:'invalid_publication_request'},400);
  if(body.action==='reject'){
   if(auth.mode==='cron')return publishJson({error:'human_action_required'},403);
   const {data,error}=await db.from('news_items').update({review_status:'rejected',scheduled_at:null}).eq('id',body.id).eq('published',false).not('publication_state','in','(claimed,sending,unknown)').select('id').maybeSingle();
@@ -28,15 +28,18 @@ Deno.serve(async(req:Request)=>{
  if(!claim?.attempt_id||!claim.payload)return publishJson({error:'publication_claim_failed'},503);
  const trace=claim.trace_id,attempt=claim.attempt_id;
  const finish=async(state:string,code:string|null=null,messageId:number|null=null,retryable=false,retrySeconds=60)=>db.rpc('finish_publication_send',{p_attempt:attempt,p_message_id:messageId,p_state:state,p_error:code,p_retryable:retryable,p_retry_seconds:retrySeconds});
- const invalid=editorialPublishError(claim.payload,claim.destination);
+ const textOnly=body.action==='publish_text';
+ const validationPayload=textOnly?{...claim.payload,graphic_url:claim.payload.graphic_url||'https://text-only.invalid'}:claim.payload;
+ const invalid=editorialPublishError(validationPayload,claim.destination);
  const token=Deno.env.get('BOT_TOKEN')||'';
  if(invalid||!token){await finish('blocked',invalid||'bot_token_missing');return publishJson({error:invalid||'bot_token_missing',trace_id:trace,retryable:false},invalid==='caption_too_long'?413:409);}
  const {data:started,error:startError}=await db.rpc('start_publication_send',{p_attempt:attempt});
  if(startError||started!==true)return publishJson({error:'publication_start_uncertain',trace_id:trace,retryable:false},409);
- const caption=editorialCaption(claim.payload,claim.destination);
+ const caption=editorialCaption(validationPayload,claim.destination);
  try{
   const video=claim.payload.video_file_id;const method=video?'sendVideo':'sendPhoto';
-  const response=await fetch('https://api.telegram.org/bot'+token+'/'+method,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(video?{chat_id:claim.destination,video,cover:claim.payload.graphic_url,caption,parse_mode:'HTML',supports_streaming:true}:{chat_id:claim.destination,photo:claim.payload.graphic_url,caption,parse_mode:'HTML'}),signal:AbortSignal.timeout(45000)});
+  const telegramBody=video?{chat_id:claim.destination,video,cover:textOnly?claim.payload.original_image_url:claim.payload.graphic_url,caption,parse_mode:'HTML',supports_streaming:true}:{chat_id:claim.destination,photo:textOnly?claim.payload.original_image_url:claim.payload.graphic_url,caption,parse_mode:'HTML'};
+  const response=await fetch('https://api.telegram.org/bot'+token+'/'+method,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(telegramBody),signal:AbortSignal.timeout(45000)});
   const result=await response.json().catch(()=>null);
   if(response.ok&&result?.ok===true&&Number.isSafeInteger(result.result?.message_id)){
    const messageId=result.result.message_id;const completed=await finish('sent',null,messageId);
