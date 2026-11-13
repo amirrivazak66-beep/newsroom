@@ -254,6 +254,15 @@ body{background:#f2f6f8}
 @media(max-width:850px){#dashboard{grid-template-columns:minmax(0,1fr) 190px!important}}
 @media(max-width:600px){#dashboard{display:block!important}.sidebar,.main-area{direction:rtl!important}}
 </style>
+<style id="radin-grid-areas-final">
+@media(min-width:601px){
+#dashboard{direction:ltr!important;display:grid!important;grid-template-columns:minmax(0,1fr) 250px!important;grid-template-rows:auto 1fr!important;grid-template-areas:"banner banner" "main sidebar"!important}
+#dashboard>.dashboard-banner{grid-area:banner!important}
+#dashboard>.main-area{grid-area:main!important;direction:rtl!important;width:auto!important;max-width:none!important}
+#dashboard>.sidebar{grid-area:sidebar!important;direction:rtl!important;width:auto!important;min-width:0!important}
+}
+@media(max-width:600px){#dashboard{display:block!important}.dashboard-banner,.main-area,.sidebar{width:100%!important;direction:rtl!important}}
+</style>
 </head>
 <body>
 
