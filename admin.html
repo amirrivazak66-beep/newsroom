@@ -237,6 +237,15 @@ body{background:#f2f6f8}
 .view [id$="List"]:empty:before,.view [id$="Rows"]:empty:before{content:'موردی برای نمایش وجود ندارد';display:block;padding:22px;text-align:center;border:1px dashed #ffffff1f;border-radius:12px;color:#8fa6c5;background:#101f35}.view [id$="List"]{min-height:30px}.view [id$="List"]:not(:empty),.view [id$="Rows"]:not(:empty){transition:opacity .2s ease}.view [id$="List"]{scrollbar-color:#31547e #0d1d33}
 @media(max-width:900px){.view:not(#viewDashboard).active{grid-template-columns:1fr}.view:not(#viewDashboard)> .panel{grid-column:1}}
 </style>
+<style id="radin-rtl-panel-fix">
+/* Explicit RTL workspace placement */
+#dashboard{direction:rtl!important;grid-template-columns:minmax(0,1fr) 250px!important}
+#dashboard>.dashboard-banner{grid-column:1/-1!important;grid-row:1!important}
+#dashboard>.sidebar{grid-column:2!important;grid-row:2!important;direction:rtl!important}
+#dashboard>.main-area{grid-column:1!important;grid-row:2!important;direction:rtl!important}
+@media(max-width:850px){#dashboard{grid-template-columns:minmax(0,1fr) 190px!important}}
+@media(max-width:600px){#dashboard{display:block!important}.sidebar{width:100%!important}}
+</style>
 </head>
 <body>
 
