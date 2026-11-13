@@ -124,7 +124,10 @@ Deno.serve(async(req)=>{
  if(!authorized)return new Response(JSON.stringify({error:"Unauthorized"}),{status:401,headers:cors});
  let query=db.from("news_items").select("id,title,summary,category,image_url,video_file_id,graphic_image_url,source_name,source_type,pub_date,source_url,telegram_chat_id,telegram_preview_message_id,rewritten_title,telegram_headline_edited,telegram_caption_edited,rewritten_text,graphic_quality_status,graphic_quality_score,graphic_quality_notes,telegram_translation_language,telegram_generate_graphic,created_at,editorial_revision,graphic_mode,trace_id,pending_graphic_prompt").eq("published",false).neq("review_status","rejected");
  if(body.item_id) query=query.eq("id",String(body.item_id));
- else query=query.eq("source_type","rss").or("and(graphic_image_url.is.null,or(image_url.not.is.null,source_type.eq.telegram)),and(source_type.eq.telegram,telegram_chat_id.not.is.null,telegram_preview_message_id.is.null)").order("created_at",{ascending:true}).limit(1);
+ // Automatic/scheduled runs are Telegram-only. RSS graphics must be requested
+ // explicitly with an item_id (the browser/admin action), otherwise they would
+ // consume OpenAI credits in the background.
+ else query=query.eq("source_type","telegram").or("and(graphic_image_url.is.null,telegram_chat_id.not.is.null),and(telegram_chat_id.not.is.null,telegram_preview_message_id.is.null)").order("created_at",{ascending:true}).limit(1);
  const {data:items,error}=await query;
  if(error)return new Response(JSON.stringify({error:error.message}),{status:500,headers:cors});
  const results=[];

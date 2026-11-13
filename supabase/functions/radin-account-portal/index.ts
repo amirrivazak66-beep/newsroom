@@ -259,12 +259,21 @@ Deno.serve(async (req: Request) => {
     if (!allowlisted) return { ok: false as const, status: 403, error: "admin_not_allowed" };
     const claims = jwtClaims(token) || {};
     const aal = String(claims.aal || "aal1");
-    return { ok: true as const, email, userId: String(user.id), aal, adminAuthAllowed: aal === "aal2" };
+    return { ok: true as const, email, userId: String(user.id), sessionId: String(claims.session_id || ""), aal, adminAuthAllowed: aal === "aal2" };
   };
 
   if (action === "web_admin_check") {
     const webAdmin = await authorizeWebAdmin(getBearerToken());
     if (!webAdmin.ok) return json({ ok: false, error: webAdmin.error }, webAdmin.status);
+    if (webAdmin.adminAuthAllowed && webAdmin.sessionId && webAdmin.userId) {
+      const now = new Date();
+      await db.from("web_admin_sessions").upsert({
+        session_id: webAdmin.sessionId, user_id: webAdmin.userId,
+        created_at: now.toISOString(), last_seen_at: now.toISOString(),
+        expires_at: new Date(now.getTime() + SESSION_TTL_SECONDS * 1000).toISOString(),
+        revoked_at: null, revoked_by: null,
+      }, { onConflict: "session_id" });
+    }
     return json({ ok: true, admin: true, email: webAdmin.email, mfaRequired: !webAdmin.adminAuthAllowed });
   }
 

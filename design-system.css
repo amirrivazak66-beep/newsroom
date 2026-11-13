@@ -1,0 +1,37 @@
+/* NEWSROOM RADIN Design System — Phase 1 (visual foundation only) */
+:root{
+  --radin-primary:#0047BB;--radin-navy:#071426;--radin-navy-2:#101F35;--radin-gold:#D6AA4B;
+  --radin-white:#FFFFFF;--radin-paper:#F4F7FC;--radin-success:#20B99A;--radin-warning:#E5A23B;
+  --radin-danger:#E05252;--radin-info:#3B82F6;--radin-text:#17243A;--radin-muted:#66758E;
+  --radin-border:#DCE4F0;--radin-radius-sm:8px;--radin-radius-md:12px;--radin-radius-lg:16px;
+  --radin-shadow-sm:0 2px 8px rgba(7,20,38,.06);--radin-shadow-md:0 8px 24px rgba(7,20,38,.09);
+  --radin-shadow-lg:0 18px 48px rgba(7,20,38,.14);--radin-space-1:4px;--radin-space-2:8px;
+  --radin-space-3:12px;--radin-space-4:16px;--radin-space-5:24px;--radin-space-6:32px;
+  --radin-font-body:'Vazirmatn',Tahoma,Arial,sans-serif;--radin-text-sm:12px;--radin-text-md:14px;--radin-text-lg:18px;
+  --radin-transition:180ms cubic-bezier(.2,.75,.25,1);
+}
+html[dir="rtl"],body{direction:rtl}body{font-family:var(--radin-font-body)}button,input,select,textarea{font-family:var(--radin-font-body)}
+.radin-btn{display:inline-flex;align-items:center;justify-content:center;gap:var(--radin-space-2);min-height:40px;padding:0 var(--radin-space-4);border:1px solid transparent;border-radius:var(--radin-radius-md);font-size:var(--radin-text-md);font-weight:700;cursor:pointer;transition:transform var(--radin-transition),box-shadow var(--radin-transition),background var(--radin-transition);}
+.radin-btn:hover{transform:translateY(-1px);box-shadow:var(--radin-shadow-md)}.radin-btn:disabled{opacity:.55;cursor:not-allowed;transform:none;box-shadow:none}
+.radin-btn-primary{background:var(--radin-primary);color:var(--radin-white)}.radin-btn-secondary{background:var(--radin-navy-2);color:var(--radin-white)}.radin-btn-ghost{background:transparent;color:var(--radin-primary);border-color:var(--radin-border)}.radin-btn-danger{background:var(--radin-danger);color:#fff}
+.radin-card{background:var(--radin-white);border:1px solid var(--radin-border);border-radius:var(--radin-radius-lg);box-shadow:var(--radin-shadow-sm);padding:var(--radin-space-5)}.radin-card-dark{background:var(--radin-navy-2);color:var(--radin-white);border-color:#ffffff1a}
+.radin-field{display:grid;gap:var(--radin-space-2);font-size:var(--radin-text-md);font-weight:600}.radin-field input,.radin-field select,.radin-field textarea{width:100%;min-height:42px;border:1px solid var(--radin-border);border-radius:var(--radin-radius-md);background:var(--radin-white);color:var(--radin-text);padding:9px 12px;outline:0;transition:border-color var(--radin-transition),box-shadow var(--radin-transition)}.radin-field textarea{min-height:110px;resize:vertical}.radin-field input:focus,.radin-field select:focus,.radin-field textarea:focus{border-color:var(--radin-primary);box-shadow:0 0 0 3px rgba(0,71,187,.12)}
+.radin-table{width:100%;border-collapse:separate;border-spacing:0;overflow:hidden;border:1px solid var(--radin-border);border-radius:var(--radin-radius-lg);background:var(--radin-white)}.radin-table th,.radin-table td{padding:var(--radin-space-3) var(--radin-space-4);border-bottom:1px solid var(--radin-border);text-align:right;font-size:var(--radin-text-md)}.radin-table th{background:var(--radin-paper);color:var(--radin-navy-2);font-weight:800}.radin-table tr:last-child td{border-bottom:0}.radin-table tbody tr:hover{background:#f8faff}
+.radin-badge{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-size:var(--radin-text-sm);font-weight:800}.radin-badge-success{color:#087c65;background:#dff7f1}.radin-badge-warning{color:#94600b;background:#fff2d5}.radin-badge-danger{color:#a92f35;background:#fde3e3}.radin-badge-info{color:#155ab5;background:#e2edff}.radin-badge-neutral{color:#53657e;background:#edf1f6}
+.radin-modal{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;padding:var(--radin-space-5);background:rgba(7,20,38,.62);backdrop-filter:blur(4px)}.radin-modal[hidden]{display:none}.radin-modal-dialog{width:min(560px,100%);max-height:90vh;overflow:auto;background:var(--radin-white);border-radius:var(--radin-radius-lg);box-shadow:var(--radin-shadow-lg);padding:var(--radin-space-6)}
+.radin-tooltip{position:relative}.radin-tooltip[data-tip]:hover::after{content:attr(data-tip);position:absolute;z-index:10;right:0;bottom:calc(100% + 8px);width:max-content;max-width:240px;padding:6px 9px;border-radius:var(--radin-radius-sm);background:var(--radin-navy);color:#fff;font-size:11px;box-shadow:var(--radin-shadow-md);pointer-events:none}
+.radin-alert{padding:var(--radin-space-3) var(--radin-space-4);border:1px solid;border-radius:var(--radin-radius-md);font-size:var(--radin-text-md);line-height:1.8}.radin-alert-success{color:#087c65;background:#e5faf5;border-color:#a8e8d9}.radin-alert-error{color:#a92f35;background:#fff0f0;border-color:#f2b5b5}.radin-alert-warning{color:#94600b;background:#fff8e8;border-color:#f1d28d}.radin-alert-info{color:#155ab5;background:#edf4ff;border-color:#b9d2fa}
+@media(max-width:720px){.radin-card{padding:var(--radin-space-4)}.radin-table{display:block;overflow-x:auto;white-space:nowrap}.radin-btn{min-height:42px}.radin-modal-dialog{padding:var(--radin-space-4)}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-duration:.01ms!important}}
+
+/* NEWSROOM RADIN — Phase 5 responsive foundation */
+html,body{max-width:100%;overflow-x:hidden}.wrap{max-width:100%;}
+img,svg,video,canvas,iframe{max-width:100%;height:auto}.row-actions{flex-wrap:wrap}.button,.btn,.btn-primary,.btn-secondary{touch-action:manipulation}
+@media(max-width:768px){
+  .radin-card{border-radius:14px}.radin-btn{min-height:44px}.radin-field input,.radin-field select,.radin-field textarea{font-size:16px}
+  .radin-table{display:block;width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}.radin-table th,.radin-table td{min-width:120px}
+  .radin-modal{align-items:end;padding:0}.radin-modal-dialog{width:100%;max-height:88vh;border-radius:18px 18px 0 0}
+}
+@media(max-width:430px){
+  .radin-card{padding:14px}.radin-btn{width:100%}.radin-tooltip[data-tip]:hover::after{display:none}
+}
