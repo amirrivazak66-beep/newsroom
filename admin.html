@@ -263,6 +263,13 @@ body{background:#f2f6f8}
 }
 @media(max-width:600px){#dashboard{display:block!important}.dashboard-banner,.main-area,.sidebar{width:100%!important;direction:rtl!important}}
 </style>
+<style id="radin-dashboard-complete-layout">
+@media(min-width:601px){
+#dashboard>.sidebar{position:sticky!important;top:0!important;height:calc(100vh - 92px)!important;align-self:start!important;overflow-y:auto!important;z-index:5!important}
+#dashboard>.main-area{min-width:0!important;width:100%!important}
+}
+.view:not(#viewDashboard).active> .panel{grid-column:1/-1!important;width:100%!important}
+</style>
 </head>
 <body>
 
