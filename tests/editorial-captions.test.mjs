@@ -1,0 +1,7 @@
+import {test} from 'node:test';import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';import {stripTypeScriptTypes} from 'node:module';
+const src=stripTypeScriptTypes(readFileSync(new URL('../supabase/functions/_shared/editorial.ts',import.meta.url),'utf8'));
+const e=await import('data:text/javascript;base64,'+Buffer.from(src).toString('base64'));
+const payload={title:'تیتر',body:'متن خبر',source_type:'telegram',category:'عمومی',source_name:'source.example',graphic_url:'https://image.example/a',original_image_url:'https://image.example/b'};
+test('long Persian captions fit Telegram and never split HTML entities',()=>{const caption=e.editorialCaption({...payload,body:'خبر <مهم> & "آزمون" '.repeat(300)},'@radinnews');assert.ok(caption.length<=1024);assert.ok(caption.includes('📣 @radinnews'));assert.equal(/&(?!amp;|lt;|gt;|quot;|#39;)/.test(caption),false);});
+test('empty generated summary falls back to original caption, single line falls back to title',()=>{assert.equal(e.canonicalEditorial({...payload,telegram_translation_language:'ar',rewritten_text:'',original_summary:'متن اصلی'}).body,'متن اصلی');assert.equal(e.canonicalEditorial({title:'خبر تک خطی',source_type:'telegram'}).body,'خبر تک خطی');});
+test('published caption has body and channel, without source footer',()=>{assert.ok(e.editorialCaption(payload,'@radinnews').includes('متن خبر'));assert.ok(!e.editorialCaption(payload,'@radinnews').includes('source.example'));});

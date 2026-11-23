@@ -59,7 +59,7 @@ Deno.serve(async (req: Request) => {
         if (token) await fetch("https://api.telegram.org/bot" + token + "/sendMessage", {
           method: "POST", headers: { "content-type": "application/json" }, signal: AbortSignal.timeout(15000),
           body: JSON.stringify({ chat_id: job.chat_id, text: "آماده‌سازی این خبر پس از سه تلاش کامل نشد. خبر ذخیره شده و منتشر نشده است.",
-            reply_markup: { inline_keyboard: [[{ text: "🔄 تلاش دوباره", callback_data: "designposter:" + job.item_id }]] } }),
+            reply_markup: { inline_keyboard: [[{ text: "🔄 تلاش دوباره", callback_data: "designposter:" + job.item_id }, { text: "لغو خبر", callback_data: "botqueue:discard:" + job.item_id }]] } }),
         }).catch(() => console.error("Preview failure notice was not delivered"));
       }
     }

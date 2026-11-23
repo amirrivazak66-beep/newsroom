@@ -413,7 +413,7 @@ Deno.serve(async (req: Request) => {
       for (const item of readyWaiting) {
         const title=String(item.rewritten_title||item.title||"خبر دریافتی").replace(/\s+/g," ").slice(0,70);
         lines.push("• "+title);
-        keyboard.push([{text:"⚡ انتشار فوری: "+title.slice(0,38),callback_data:"botqueue:publish:"+item.id+":"+Number(item.editorial_revision||1)}]);
+        keyboard.push([{text:"⚡ انتشار فوری: "+title.slice(0,38),callback_data:"botqueue:publish:"+item.id+":"+Number(item.editorial_revision||1)},{text:"لغو: "+title.slice(0,38),callback_data:"botqueue:discard:"+item.id}]);
       }
     }
     lines.push("", "ترتیب خودکار بر اساس جدیدترین دریافت است؛ خبرهای نزدیک زمان انتشار جابه‌جا نمی‌شوند.");
@@ -646,13 +646,13 @@ Deno.serve(async (req: Request) => {
       }
       if (action === "discard") {
         const discardId=parts[2]||"", chat=callback.message?.chat?.id;
-        const {data:changed,error}=await db.from("news_items").update({scheduled_at:null,publication_state:"blocked",review_status:"pending",updated_at:new Date().toISOString()}).eq("id",discardId).eq("published",false).select("id").maybeSingle();
-        await db.from("radin_preview_jobs").delete().eq("item_id",discardId).in("state",["queued","processing","failed"]);
+        const {data:changed,error}=await db.from("news_items").update({scheduled_at:null,publication_state:"blocked",review_status:"pending",updated_at:new Date().toISOString()}).eq("id",discardId).eq("published",false).is("telegram_message_id",null).not("publication_state","in","(claimed,sending,unknown,sent)").select("id").maybeSingle();
+        if(!error&&changed)await db.from("radin_preview_jobs").delete().eq("item_id",discardId).in("state",["queued","processing","failed"]);
         await answerCallback(String(callback.id),!error&&changed?"خبر از صف حذف شد.":"حذف از صف انجام نشد."); await showScheduledQueue(chat,messageId); return json({ok:true});
       }
       if (action === "publish") {
         const itemId=parts[2]||"", expectedRevision=Number(parts[3]||0), chat=callback.message?.chat?.id;
-        const response=await fetch(supabaseUrl+"/functions/v1/radin-publish-news",{method:"POST",headers:{"content-type":"application/json",apikey:serviceKey,authorization:"Bearer "+serviceKey,"x-radin-telegram-secret":webhookSecret},body:JSON.stringify({id:itemId,action:"publish",expected_revision:expectedRevision})});
+        const response=await fetch(supabaseUrl+"/functions/v1/radin-publish-news",{method:"POST",headers:{"content-type":"application/json",apikey:serviceKey,authorization:"Bearer "+serviceKey,"x-radin-telegram-secret":webhookSecret},body:JSON.stringify({id:itemId,action:"publish",expected_revision:expectedRevision,immediate:true})});
         let result:any={};try{result=await response.json();}catch{}
         if(!response.ok||!result.ok){await answerCallback(String(callback.id),String(result.error||"انتشار فوری انجام نشد").slice(0,180));await showScheduledQueue(chat,messageId);return json({ok:true});}
         await answerCallback(String(callback.id),"خبر بلافاصله منتشر شد.");
@@ -910,7 +910,7 @@ Deno.serve(async (req: Request) => {
         "authorization":"Bearer "+serviceKey,
         "x-radin-telegram-secret": webhookSecret,
       },
-      body: JSON.stringify({ id: itemId, action: "publish", expected_revision:expectedRevision }),
+      body: JSON.stringify({ id: itemId, action: "publish", expected_revision:expectedRevision, immediate:true }),
     });
     let publishResult: any = {};
     try { publishResult = await publishResponse.json(); } catch {}
@@ -1453,7 +1453,7 @@ Deno.serve(async (req: Request) => {
       .trim();
   };
   let titleCandidate = manualLines[0] || metaTitle || "";
-  let summaryCandidate = manualLines.slice(1).join("\n") || metaDescription || "";
+  let summaryCandidate = manualLines.slice(1).join("\n") || metaDescription || manualText || "";
   if (textOnlyForward && titleCandidate.length > 160) {
     const sentence = titleCandidate.match(/^.{35,150}?[.!؟](?:\s|$)/u)?.[0]?.trim();
     titleCandidate = sentence || titleCandidate.slice(0, 120).trim();

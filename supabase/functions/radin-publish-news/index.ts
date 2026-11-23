@@ -22,7 +22,7 @@ Deno.serve(async(req:Request)=>{
  }
  const scheduled=body.scheduled===true;
  if(scheduled&&auth.mode!=='cron'||!scheduled&&auth.mode==='cron')return publishJson({error:'invalid_publication_mode'},403);
- const {data:claim,error:claimError}=await db.rpc('claim_editorial_publication',{p_item_id:body.id,p_actor:auth.actor,p_scheduled:scheduled,p_expected_revision:Number.isInteger(body.expected_revision)?body.expected_revision:null});
+ const {data:claim,error:claimError}=await db.rpc('claim_editorial_publication_v2',{p_item_id:body.id,p_actor:auth.actor,p_scheduled:scheduled,p_expected_revision:Number.isInteger(body.expected_revision)?body.expected_revision:null,p_immediate:body.immediate===true&&auth.mode!=='cron'});
  if(claimError)return publishJson({error:'publication_claim_failed'},503);
  if(claim?.error)return publishJson({error:claim.error,retryable:false},claim.status||409);
  if(!claim?.attempt_id||!claim.payload)return publishJson({error:'publication_claim_failed'},503);

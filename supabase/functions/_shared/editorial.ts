@@ -7,7 +7,7 @@ export function cleanEditorialBody(value: unknown, sourceType: string): string {
 export function canonicalEditorial(item: Record<string, any>): EditorialPayload {
   const source=editorialText(item.source_type);
   const translated=!!item.telegram_translation_language;
-  return {title:editorialText(item.rewritten_title||item.title),body:cleanEditorialBody((item.telegram_caption_edited||translated)?item.rewritten_text:(item.original_summary||item.summary||item.rewritten_text),source),category:editorialText(item.category),source_name:editorialText(item.source_name),source_type:source,pub_date:item.pub_date||null,graphic_url:editorialText(item.graphic_image_url),original_image_url:editorialText(item.original_image_url),video_file_id:item.video_file_id||null};
+  return {title:editorialText(item.rewritten_title||item.title),body:cleanEditorialBody((item.telegram_caption_edited||translated)?(item.rewritten_text||item.original_summary||item.summary||item.title):(item.original_summary||item.summary||item.rewritten_text||item.title),source),category:editorialText(item.category),source_name:editorialText(item.source_name),source_type:source,pub_date:item.pub_date||null,graphic_url:editorialText(item.graphic_image_url),original_image_url:editorialText(item.original_image_url),video_file_id:item.video_file_id||null};
 }
 export function editorialEscape(value: unknown): string { return String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]!)); }
 export function editorialCaption(payload: EditorialPayload, channel: string, preview=false): string {
@@ -16,7 +16,17 @@ export function editorialCaption(payload: EditorialPayload, channel: string, pre
   // Source URLs/names are intentionally omitted from the public caption.
   // The source remains stored internally for audit and traceability.
   const source='';
-  return [preview?'پیش‌نمایش — هنوز منتشر نشده':'',title,category,payload.body?editorialEscape(payload.body):'',source,preview?'':'📣 '+editorialEscape(channel)].filter(Boolean).join('\n\n');
+  const prefix=[preview?'پیش‌نمایش — هنوز منتشر نشده':'',title,category].filter(Boolean).join('\n\n');
+  const suffix=preview?'':'📣 '+editorialEscape(channel);
+  // Clip plain text before escaping, so HTML entities can never be split.
+  const budget=preview?3900:980;
+  const room=Math.max(0,budget-prefix.length-suffix.length-4);
+  const characters=Array.from(String(payload.body||''));
+  let low=0,high=characters.length;
+  while(low<high){const mid=Math.ceil((low+high)/2);if(editorialEscape(characters.slice(0,mid).join('')).length<=room)low=mid;else high=mid-1;}
+  let text=characters.slice(0,low).join('');
+  if(text!==payload.body&&text.length>1)text=Array.from(text).slice(0,-1).join('')+'…';
+  return [prefix,editorialEscape(text),source,suffix].filter(Boolean).join('\n\n');
 }
 export function editorialPlainPreview(payload: EditorialPayload): string {
   return ['پیش‌نمایش — هنوز منتشر نشده',payload.title,payload.body].filter(Boolean).join('\n\n');

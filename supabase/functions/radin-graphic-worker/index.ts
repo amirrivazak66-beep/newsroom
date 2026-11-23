@@ -187,7 +187,7 @@ Deno.serve(async(req)=>{
    const openAiKey=Deno.env.get("OPENAI_API_KEY")||"";
    const cleanHeadline=(value:string)=>value.replace(/https?:\/\/[^\s<>]+|(?:www\.)?t\.me\/[^\s<>]+|telegram\.me\/[^\s<>]+/gi,"").replace(/(?:^|\s)@[a-z0-9_]+/gi," ").replace(/^(?:[⏺🔹✅🔵⚪🔴]+\s*)+/u,"").replace(/\s+/g," ").trim();
    let rawTitle=cleanHeadline(String(item.title||""));
-   let rawSummary=cleanHeadline(String(item.summary||""));
+   let rawSummary=cleanHeadline(String(item.rewritten_text||item.summary||item.title||""));
    const translationLanguage=String(item.telegram_translation_language||"");
    if(isTelegram&&translationLanguage&&!openAiKey)throw new PipelineError("translation_key_missing",401);
    if(isTelegram&&(translationLanguage==="ar"||translationLanguage==="en")&&openAiKey){
