@@ -7,6 +7,7 @@ await db.exec(fixture);
 await db.exec(`create function public.editorial_policy_allows(p_item_id uuid) returns boolean language sql as $$select exists(select 1 from public.news_items n cross join public.bot_settings s where n.id=p_item_id and not n.published and n.publication_state='idle' and (n.approved_revision=n.editorial_revision or (not s.review_required and n.sensitivity='normal' and n.graphic_quality_status is distinct from 'review')))$$;`);
 await db.exec(readFileSync(new URL('../supabase/hardening/forwarded-publication-repair.sql',import.meta.url),'utf8'));
 await db.exec(readFileSync(new URL('../supabase/hardening/queue-capacity-repair.sql',import.meta.url),'utf8'));
+await db.exec(readFileSync(new URL('../supabase/hardening/queue-minute-alignment.sql',import.meta.url),'utf8'));
 await db.exec("insert into bot_settings(id,auto_publish,review_required,schedule_interval_minutes,queue_limit) values('main',true,false,5,10)");
 const ids=Array.from({length:6},(_,i)=>`10000000-0000-4000-8000-${String(i+1).padStart(12,'0')}`);
 for(let i=0;i<ids.length;i++)await db.query("insert into news_items(id,title,rewritten_title,summary,source_type,telegram_chat_id,graphic_image_url,original_image_url,telegram_preview_message_id,trace_id,video_file_id,created_at) values($1,'تیتر تک خطی','تیتر هوشمند',null,'telegram',111,'https://image.example/poster','https://image.example/photo',123,gen_random_uuid(),$2,now()+make_interval(secs=>$3))",[ids[i],i===1?'video-file-id':null,i]);
@@ -17,6 +18,7 @@ assert.equal((await db.query("select fill_radin_publish_queue(array[111]::bigint
 const queue=(await db.query("select id,scheduled_at from news_items where scheduled_at is not null and publication_state='idle' order by scheduled_at")).rows;
 assert.deepEqual(queue.map(x=>x.id),ids.slice(0,4).reverse());
 assert.equal(new Date(queue[1].scheduled_at)-new Date(queue[0].scheduled_at),300000);
+assert.ok(queue.every(x=>new Date(x.scheduled_at).getSeconds()===0),'slots align to the minute scheduler');
 assert.equal((await db.query("select final_payload->>'body' body from news_items where id=$1",[ids[0]])).rows[0].body,'تیتر تک خطی');
 const publish=async(id,scheduled,immediate)=> (await db.query('select claim_editorial_publication_v2($1,$2,$3,1,$4) result',[id,'telegram:test',scheduled,immediate])).rows[0].result;
 assert.equal((await publish(ids[0],false,false)).error,'cancel_schedule_first');
