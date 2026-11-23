@@ -11,7 +11,7 @@ export function canonicalEditorial(item: Record<string, any>): EditorialPayload 
 }
 export function editorialEscape(value: unknown): string { return String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]!)); }
 export function editorialCaption(payload: EditorialPayload, channel: string, preview=false): string {
-  const title=preview||payload.source_type!=='telegram'?'<b>'+editorialEscape(payload.title)+'</b>':'';
+  const title=payload.title?'<b>'+editorialEscape(payload.title)+'</b>':'';
   const category=payload.category&&!(payload.source_type==='telegram'&&payload.category==='عمومی')?'🏷️ '+editorialEscape(payload.category):'';
   // Source URLs/names are intentionally omitted from the public caption.
   // The source remains stored internally for audit and traceability.

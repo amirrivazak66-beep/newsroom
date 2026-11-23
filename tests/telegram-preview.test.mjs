@@ -68,3 +68,11 @@ test('queue view includes stories still being processed',async()=>{
  const s=await run({queueView:true});
  assert.ok(s.calls.some(x=>x.body.text?.includes('در حال ساخت — خبر تازه')));
 });
+
+test('forwarded source caption keeps the first line as well as the body',async()=>{
+ const s=await run({forward:true});
+ const inserted=s.activity.find(x=>x.original_title&&x.original_summary);
+ assert.ok(inserted,'forwarded story was persisted');
+ assert.ok(inserted.original_summary.includes('خبر جدید از ایران اعلام شد'));
+ assert.ok(inserted.original_summary.includes('این گزارش برای بررسی خبر در کشور است.'));
+});

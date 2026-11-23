@@ -377,7 +377,7 @@ Deno.serve(async (req: Request) => {
       return;
     }
     const list = items || [];
-    const lines = ["📋 صف ارسال زمان‌بندی‌شده", ""];
+    const lines = ["📋 صف ارسال زمان‌بندی‌شده", "به‌روزرسانی: " + new Intl.DateTimeFormat("fa-IR",{timeStyle:"medium",timeZone:"Asia/Tehran"}).format(new Date()), ""];
     const keyboard: any[] = [];
     list.forEach((item: any, index: number) => {
       const title = String(item.rewritten_title || item.title || "خبر بدون عنوان").replace(/\s+/g, " ").slice(0, 95);
@@ -392,7 +392,7 @@ Deno.serve(async (req: Request) => {
     if (!list.length) lines.push("صف زمان‌بندی‌شده خالی است.");
     const { data: waiting } = await db.from("radin_preview_jobs")
       .select("item_id,state,news_items!inner(title,rewritten_title,published,publication_state)").in("state", ["queued", "processing", "failed"])
-      .eq("news_items.published", false).is("news_items.telegram_message_id", null).eq("news_items.publication_state", "idle")
+      .eq("news_items.published", false).neq("news_items.review_status", "rejected").is("news_items.telegram_message_id", null).eq("news_items.publication_state", "idle")
       .order("requested_at", { ascending: false }).limit(8);
     if (waiting?.length) {
       lines.push("", "⏳ صف آماده‌سازی — جدیدترین خبر اول:");
@@ -1453,7 +1453,7 @@ Deno.serve(async (req: Request) => {
       .trim();
   };
   let titleCandidate = manualLines[0] || metaTitle || "";
-  let summaryCandidate = manualLines.slice(1).join("\n") || metaDescription || manualText || "";
+  let summaryCandidate = forwardedFromTelegram ? manualText : (manualLines.slice(1).join("\n") || metaDescription || manualText || "");
   if (textOnlyForward && titleCandidate.length > 160) {
     const sentence = titleCandidate.match(/^.{35,150}?[.!؟](?:\s|$)/u)?.[0]?.trim();
     titleCandidate = sentence || titleCandidate.slice(0, 120).trim();
